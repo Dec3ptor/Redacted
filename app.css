@@ -28,3 +28,6 @@ body[data-mode="move"] .canvaswrap{touch-action:auto} body[data-mode="move"] .rb
 #restorePanel{display:none}
 @media(min-width:701px){.toolbar{position:sticky;top:0;margin-bottom:4px}}
 @media(max-width:700px){body.editing{padding-bottom:164px}.toolbar{position:fixed;left:0;right:0;bottom:0;border-width:2px 0 0;padding:10px 12px calc(12px + env(safe-area-inset-bottom));max-height:160px;overflow:auto}.seg{flex:1 1 100%}.seg button{flex:1;padding:12px 8px;font-size:13px}#saveBtn{margin-left:auto}.searchbar,.securebar{margin-bottom:8px}}
+
+.resumebar[hidden]{display:none}
+.resumebar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;border:1px solid var(--ink);padding:11px 14px;margin:0 0 14px;font-size:15px}
