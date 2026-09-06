@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Redact a PDF so the text is actually gone — Blackout</title>
+<meta name="description" content="Black boxes drawn in Preview or Acrobat leave the text underneath intact. This flattens the page so the words are destroyed, not covered. Runs entirely in your browser — nothing is uploaded.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<style>
+  /* ---------- hero demo ---------- */
+  .demo{border:1px solid var(--ink);padding:22px 20px 18px;margin:0 0 40px;max-width:var(--measure)}
+  .demo .doc{font-family:var(--serif);font-size:19px;line-height:1.9;margin:0 0 18px}
+  .fauxbar{background:var(--ink);color:var(--ink);padding:1px 4px;user-select:text}
+  .demo.open .fauxbar{background:var(--g06);color:var(--ink);border-bottom:2px dashed var(--ink);padding-bottom:0}
+  .demo-foot{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+  .demo-foot p{font-size:14px;color:var(--g70);margin:0}
+
+  /* ---------- editor ---------- */
+  #editor{display:none}
+  .filestrip{
+    display:flex;align-items:baseline;gap:14px;
+    border-bottom:1px solid var(--g25);padding-bottom:10px;margin-bottom:14px;
+  }
+  .filestrip .fname{
+    font-family:var(--mono);font-size:13px;color:var(--g70);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;
+  }
+
+  .toolbar{
+    background:var(--paper);border:2px solid var(--ink);
+    display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+    padding:10px;z-index:40;
+  }
+  .seg{display:flex;border:1.5px solid var(--ink);flex:0 0 auto}
+  .seg button{
+    padding:11px 20px;background:var(--paper);border:0;cursor:pointer;
+    font-size:15px;font-weight:600;color:var(--ink);line-height:1;
+  }
+  .seg button + button{border-left:1.5px solid var(--ink)}
+  .seg button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+  #saveBtn{margin-left:auto}
+
+  .hint{font-size:15px;color:var(--g70);margin:16px 0 20px;max-width:var(--measure)}
+
+  .page{margin-bottom:26px}
+  .pagenum{font-family:var(--mono);font-size:12px;color:var(--g70);margin-bottom:6px}
+  .canvaswrap{position:relative;line-height:0;border:1px solid var(--g25)}
+  .canvaswrap canvas{width:100%;height:auto;display:block;background:#fff}
+  .layer{position:absolute;inset:0;pointer-events:none}
+  .rbox{position:absolute;background:var(--ink);pointer-events:none}
+  .marquee{position:absolute;background:rgba(0,0,0,.8);display:none;pointer-events:none}
+
+  body[data-mode="redact"] .canvaswrap{touch-action:none;cursor:crosshair}
+  body[data-mode="move"]   .canvaswrap{touch-action:auto}
+  body[data-mode="move"] .rbox{pointer-events:auto;touch-action:none;cursor:move}
+
+  .rbox.sel{outline:2px solid var(--ink);outline-offset:3px}
+  .rbox.sel::after{content:'';position:absolute;inset:3px;border:1px dashed #fff;pointer-events:none}
+  .rdel,.rgrip{display:none;position:absolute;box-sizing:border-box}
+  .rbox.sel .rdel,.rbox.sel .rgrip{display:block}
+  .rdel{
+    top:-15px;right:-15px;width:30px;height:30px;
+    background:var(--paper);border:2px solid var(--ink);color:var(--ink);
+    font-size:17px;line-height:1;cursor:pointer;padding:0;
+    font-family:var(--sans);font-weight:600;
+  }
+  .rdel:hover{background:var(--ink);color:var(--paper)}
+  .rgrip{
+    bottom:-14px;right:-14px;width:28px;height:28px;
+    background:var(--paper);border:2px solid var(--ink);
+    cursor:nwse-resize;touch-action:none;
+  }
+
+  @media(min-width:701px){ .toolbar{position:sticky;top:0;margin-bottom:4px} }
+  @media(max-width:700px){
+    body.editing{padding-bottom:130px}
+    .toolbar{
+      position:fixed;left:0;right:0;bottom:0;
+      border-width:2px 0 0;
+      padding:10px 16px calc(12px + env(safe-area-inset-bottom));
+    }
+    .seg{flex:1 1 100%}
+    .seg button{flex:1;padding:13px 10px}
+    #saveBtn{margin-left:auto}
+  }
+</style>
+</head>
+<body data-mode="redact">
+<div class="wrap">
+
+  <header class="masthead">
+    <a class="brand" href="index.html">
+      <span class="bar" aria-hidden="true"></span>
+      <b>Blackout</b>
+      <span>Nothing leaves<br>your browser</span>
+    </a>
+    <nav>
+      <a href="index.html" aria-current="page">Redact a document</a>
+      <a href="metadata.html">Inspect metadata</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="history.html">When it goes wrong</a>
+    </nav>
+  </header>
+
+  <h1>A black box is not a redaction.</h1>
+  <p class="standfirst">Draw a rectangle in Preview, Word, or Acrobat's markup tool and you have covered the words with a picture of a rectangle. The text is still in the file. Anyone can select it, copy it, or lift it out with one command.</p>
+
+  <div class="demo" id="demo">
+    <p class="doc">Wire the remaining balance to account <span class="fauxbar">4471&nbsp;0093&nbsp;2288</span>, held at <span class="fauxbar">First Meridian Bank</span>, before the fourteenth.</p>
+    <div class="demo-foot">
+      <button class="btn small" id="revealBtn">Show what is under the boxes</button>
+      <p>Or drag your cursor across the line.</p>
+    </div>
+  </div>
+
+  <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose a PDF or image to redact">
+    <strong>Drop a PDF or image here</strong>
+    <span>or tap to choose a file</span>
+  </div>
+  <input type="file" id="file" accept="application/pdf,image/*" hidden>
+  <p class="assurance"><b>This page does the work, not a server.</b> Your file is opened by your own browser and is never transmitted anywhere. There is no upload, no account, and no copy kept. Disconnect from the internet after this page loads and it still works.</p>
+
+  <div id="editor">
+    <div class="filestrip">
+      <span class="fname" id="fname"></span>
+      <button class="btn small" id="newBtn">Start over</button>
+    </div>
+
+    <div class="toolbar">
+      <div class="seg" role="group" aria-label="Tool mode">
+        <button type="button" id="modeRedact" aria-pressed="true">Redact</button>
+        <button type="button" id="modeMove" aria-pressed="false">Move &amp; scroll</button>
+      </div>
+      <button class="btn" id="undoBtn" disabled>Undo</button>
+      <button class="btn" id="delBtn" disabled>Delete box</button>
+      <button class="btn solid" id="saveBtn" disabled>Save</button>
+    </div>
+
+    <p class="hint" id="hint"></p>
+    <div id="pages"></div>
+  </div>
+
+  <p id="status" role="status"></p>
+
+  <article>
+    <h2>Why this one works</h2>
+    <p>Most tools draw a shape on a layer above your document. That layer is cosmetic. The character data sits underneath it, untouched, and travels with the file to whoever you send it to.</p>
+    <p>This tool throws the document away. Every page is redrawn as a flat picture, your boxes are painted onto that picture, and a new file is built from the result. There is no text layer left to recover — not the parts you covered, and not the parts you didn't. Embedded metadata, annotations, tracked changes, and hidden layers go with it.</p>
+    <p>The tradeoff is real and you should know it before you rely on this: the file you get back is not searchable or selectable, and it is usually larger than the original. That is the cost of the words being genuinely gone. <a href="how-it-works.html">The longer explanation is here</a>, and if you want to see how expensive this mistake gets, <a href="history.html">here is the record of people who got it wrong</a>.</p>
+  </article>
+
+  <footer>
+    <span>Blackout</span>
+    <a href="how-it-works.html">How it works</a>
+    <a href="metadata.html">Inspect metadata</a>
+    <a href="history.html">When it goes wrong</a>
+  </footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  var MAX_PAGES = 60;
+  var pdfjsLib = window.pdfjsLib;
+  if (pdfjsLib) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+
+  var $ = function(id){ return document.getElementById(id); };
+  var pages = [], history = [], selected = null, mode = 'redact';
+  var sourceIsPDF = false, baseName = 'document';
+
+  var drop=$('drop'), fileInput=$('file'), editor=$('editor'), pagesEl=$('pages'),
+      statusEl=$('status'), hint=$('hint'),
+      undoBtn=$('undoBtn'), delBtn=$('delBtn'), saveBtn=$('saveBtn'), newBtn=$('newBtn');
+
+  function say(m){ statusEl.textContent = m || ''; }
+
+  /* ================= hero demo ================= */
+  $('revealBtn').addEventListener('click', function(){
+    var open = $('demo').classList.toggle('open');
+    this.textContent = open ? 'Cover them again' : 'Show what is under the boxes';
+  });
+
+  /* ================= mode ================= */
+  function setMode(m){
+    mode = m;
+    document.body.dataset.mode = m;
+    $('modeRedact').setAttribute('aria-pressed', m === 'redact');
+    $('modeMove').setAttribute('aria-pressed', m === 'move');
+    hint.textContent = m === 'redact'
+      ? 'Drag across anything you want gone. The page will not scroll while you draw — switch to Move & scroll to get around.'
+      : 'Scroll and pinch normally. Tap any box to select it, then drag it, pull the corner to resize, or delete it.';
+    if (m === 'redact') deselect();
+  }
+  $('modeRedact').addEventListener('click', function(){ setMode('redact'); });
+  $('modeMove').addEventListener('click', function(){ setMode('move'); });
+
+  /* ================= file intake ================= */
+  drop.addEventListener('click', function(){ fileInput.click(); });
+  drop.addEventListener('keydown', function(e){
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+  });
+  ['dragenter','dragover'].forEach(function(ev){
+    drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.add('hot'); });
+  });
+  ['dragleave','drop'].forEach(function(ev){
+    drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.remove('hot'); });
+  });
+  drop.addEventListener('drop', function(e){
+    if (e.dataTransfer.files.length) openFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', function(){
+    if (this.files.length) openFile(this.files[0]);
+  });
+
+  function openFile(file){
+    resetAll();
+    baseName = (file.name || 'document').replace(/\.[^.]+$/, '') || 'document';
+    $('fname').textContent = file.name;
+    sourceIsPDF = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+
+    if (sourceIsPDF) {
+      if (!pdfjsLib) { say('The PDF reader did not load. Check your connection and reload the page.'); return; }
+      say('Opening PDF…');
+      openPDF(file);
+    } else if ((file.type || '').indexOf('image/') === 0) {
+      say('Opening image…');
+      openImage(file);
+    } else {
+      say('That file type is not supported here. Use a PDF or an image.');
+    }
+  }
+
+  function openPDF(file){
+    var fr = new FileReader();
+    fr.onload = function(){
+      pdfjsLib.getDocument({ data: new Uint8Array(fr.result) }).promise.then(function(pdf){
+        var count = Math.min(pdf.numPages, MAX_PAGES);
+        var chain = Promise.resolve();
+        for (var i = 1; i <= count; i++) {
+          (function(n){
+            chain = chain.then(function(){
+              say('Rendering page ' + n + ' of ' + count + '…');
+              return pdf.getPage(n).then(function(page){
+                var vp = page.getViewport({ scale: 2 });
+                var c = document.createElement('canvas');
+                c.width = Math.floor(vp.width);
+                c.height = Math.floor(vp.height);
+                var ctx = c.getContext('2d');
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(0, 0, c.width, c.height);
+                return page.render({ canvasContext: ctx, viewport: vp }).promise.then(function(){
+                  addPage(c, vp.width / 2, vp.height / 2, n, count);
+                });
+              });
+            });
+          })(i);
+        }
+        return chain.then(function(){
+          ready(pdf.numPages > MAX_PAGES
+            ? 'Showing the first ' + MAX_PAGES + ' pages. Split longer documents before redacting.'
+            : '');
+        });
+      }).catch(function(err){
+        console.error(err);
+        say('That PDF could not be opened. It may be password protected or damaged.');
+      });
+    };
+    fr.onerror = function(){ say('That file could not be read.'); };
+    fr.readAsArrayBuffer(file);
+  }
+
+  function openImage(file){
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function(){
+      var c = document.createElement('canvas');
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      c.getContext('2d').drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+      addPage(c, img.naturalWidth, img.naturalHeight, 1, 1);
+      ready('');
+    };
+    img.onerror = function(){ URL.revokeObjectURL(url); say('That image could not be opened.'); };
+    img.src = url;
+  }
+
+  function ready(msg){
+    editor.style.display = 'block';
+    drop.style.display = 'none';
+    document.body.classList.add('editing');
+    saveBtn.disabled = false;
+    setMode('redact');
+    say(msg);
+    editor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function resetAll(){
+    pages = []; history = []; selected = null;
+    pagesEl.innerHTML = '';
+    editor.style.display = 'none';
+    drop.style.display = 'block';
+    document.body.classList.remove('editing');
+    undoBtn.disabled = delBtn.disabled = saveBtn.disabled = true;
+    say('');
+  }
+  newBtn.addEventListener('click', function(){ fileInput.value = ''; resetAll(); });
+
+  /* ================= pages ================= */
+  function addPage(baseCanvas, wPt, hPt, num, total){
+    var holder = document.createElement('div');
+    holder.className = 'page';
+
+    if (total > 1) {
+      var lbl = document.createElement('div');
+      lbl.className = 'pagenum';
+      lbl.textContent = 'Page ' + num + ' of ' + total;
+      holder.appendChild(lbl);
+    }
+
+    var wrap = document.createElement('div');
+    wrap.className = 'canvaswrap';
+
+    var disp = document.createElement('canvas');
+    disp.width = baseCanvas.width; disp.height = baseCanvas.height;
+    disp.getContext('2d').drawImage(baseCanvas, 0, 0);
+    wrap.appendChild(disp);
+
+    var layer = document.createElement('div');
+    layer.className = 'layer';
+    wrap.appendChild(layer);
+
+    var marquee = document.createElement('div');
+    marquee.className = 'marquee';
+    layer.appendChild(marquee);
+
+    holder.appendChild(wrap);
+    pagesEl.appendChild(holder);
+
+    var page = { base: baseCanvas, wrap: wrap, layer: layer, rects: [], wPt: wPt, hPt: hPt };
+    pages.push(page);
+    wireDrawing(page, marquee);
+  }
+
+  /* ================= undo ================= */
+  function snapshot(){
+    history.push(pages.map(function(p){
+      return p.rects.map(function(r){ return { x:r.x, y:r.y, w:r.w, h:r.h }; });
+    }));
+    if (history.length > 60) history.shift();
+    undoBtn.disabled = false;
+  }
+
+  undoBtn.addEventListener('click', function(){
+    var snap = history.pop();
+    if (!snap) return;
+    deselect();
+    pages.forEach(function(p, i){
+      p.rects.forEach(function(r){ r.el.parentNode.removeChild(r.el); });
+      p.rects = [];
+      (snap[i] || []).forEach(function(d){ makeBox(p, d.x, d.y, d.w, d.h); });
+    });
+    if (!history.length) undoBtn.disabled = true;
+  });
+
+  /* ================= boxes ================= */
+  function makeBox(page, x, y, w, h){
+    var el = document.createElement('div');
+    el.className = 'rbox';
+
+    var del = document.createElement('button');
+    del.type = 'button'; del.className = 'rdel';
+    del.setAttribute('aria-label', 'Delete this box');
+    del.textContent = '\u00D7';
+
+    var grip = document.createElement('span');
+    grip.className = 'rgrip';
+    grip.setAttribute('aria-hidden', 'true');
+
+    el.appendChild(del); el.appendChild(grip);
+    page.layer.appendChild(el);
+
+    var r = { x:x, y:y, w:w, h:h, el:el, page:page };
+    place(r);
+    page.rects.push(r);
+    wireBox(r, del, grip);
+    return r;
+  }
+
+  function place(r){
+    r.el.style.left   = (r.x * 100) + '%';
+    r.el.style.top    = (r.y * 100) + '%';
+    r.el.style.width  = (r.w * 100) + '%';
+    r.el.style.height = (r.h * 100) + '%';
+  }
+
+  function select(r){
+    if (selected === r) return;
+    deselect();
+    selected = r;
+    r.el.classList.add('sel');
+    delBtn.disabled = false;
+  }
+  function deselect(){
+    if (selected) selected.el.classList.remove('sel');
+    selected = null;
+    delBtn.disabled = true;
+  }
+
+  function removeBox(r){
+    var i = r.page.rects.indexOf(r);
+    if (i > -1) r.page.rects.splice(i, 1);
+    if (r.el.parentNode) r.el.parentNode.removeChild(r.el);
+    if (selected === r) deselect();
+  }
+
+  delBtn.addEventListener('click', function(){
+    if (!selected) return;
+    snapshot();
+    removeBox(selected);
+  });
+
+  document.addEventListener('keydown', function(e){
+    if (!selected) return;
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault(); snapshot(); removeBox(selected);
+    } else if (e.key === 'Escape') {
+      deselect();
+    }
+  });
+
+  /* ---- drawing a new box ---- */
+  function wireDrawing(page, marquee){
+    var drawing = false, sx = 0, sy = 0;
+    var wrap = page.wrap;
+
+    function rel(e){
+      var b = wrap.getBoundingClientRect();
+      return {
+        x: Math.min(Math.max((e.clientX - b.left) / b.width, 0), 1),
+        y: Math.min(Math.max((e.clientY - b.top) / b.height, 0), 1)
+      };
+    }
+
+    wrap.addEventListener('pointerdown', function(e){
+      if (mode !== 'redact') return;
+      e.preventDefault();
+      wrap.setPointerCapture(e.pointerId);
+      drawing = true;
+      var p = rel(e); sx = p.x; sy = p.y;
+      marquee.style.display = 'block';
+      marquee.style.left = (sx*100)+'%'; marquee.style.top = (sy*100)+'%';
+      marquee.style.width = '0'; marquee.style.height = '0';
+    });
+
+    wrap.addEventListener('pointermove', function(e){
+      if (!drawing) return;
+      var p = rel(e);
+      marquee.style.left   = (Math.min(sx,p.x)*100)+'%';
+      marquee.style.top    = (Math.min(sy,p.y)*100)+'%';
+      marquee.style.width  = (Math.abs(p.x-sx)*100)+'%';
+      marquee.style.height = (Math.abs(p.y-sy)*100)+'%';
+    });
+
+    function done(e){
+      if (!drawing) return;
+      drawing = false;
+      marquee.style.display = 'none';
+      var p = rel(e);
+      var w = Math.abs(p.x - sx), h = Math.abs(p.y - sy);
+      if (w < 0.005 || h < 0.005) return;      // ignore accidental taps
+      snapshot();
+      makeBox(page, Math.min(sx,p.x), Math.min(sy,p.y), w, h);
+    }
+    wrap.addEventListener('pointerup', done);
+    wrap.addEventListener('pointercancel', function(){
+      drawing = false; marquee.style.display = 'none';
+    });
+  }
+
+  /* ---- moving and resizing an existing box ---- */
+  function wireBox(r, del, grip){
+    var dragging = false, resizing = false, moved = false;
+    var startX = 0, startY = 0, origin = null;
+
+    function scale(){
+      var b = r.page.wrap.getBoundingClientRect();
+      return { w: b.width, h: b.height };
+    }
+
+    del.addEventListener('pointerdown', function(e){ e.stopPropagation(); });
+    del.addEventListener('click', function(e){
+      e.stopPropagation(); snapshot(); removeBox(r);
+    });
+
+    grip.addEventListener('pointerdown', function(e){
+      if (mode !== 'move') return;
+      e.stopPropagation(); e.preventDefault();
+      grip.setPointerCapture(e.pointerId);
+      select(r);
+      resizing = true; moved = false;
+      startX = e.clientX; startY = e.clientY;
+      origin = { w: r.w, h: r.h };
+    });
+    grip.addEventListener('pointermove', function(e){
+      if (!resizing) return;
+      if (!moved) { snapshot(); moved = true; }
+      var s = scale();
+      r.w = Math.max(0.005, Math.min(origin.w + (e.clientX - startX) / s.w, 1 - r.x));
+      r.h = Math.max(0.005, Math.min(origin.h + (e.clientY - startY) / s.h, 1 - r.y));
+      place(r);
+    });
+    grip.addEventListener('pointerup', function(){ resizing = false; });
+    grip.addEventListener('pointercancel', function(){ resizing = false; });
+
+    r.el.addEventListener('pointerdown', function(e){
+      if (mode !== 'move') return;
+      e.preventDefault();
+      r.el.setPointerCapture(e.pointerId);
+      select(r);
+      dragging = true; moved = false;
+      startX = e.clientX; startY = e.clientY;
+      origin = { x: r.x, y: r.y };
+    });
+    r.el.addEventListener('pointermove', function(e){
+      if (!dragging) return;
+      var dx = e.clientX - startX, dy = e.clientY - startY;
+      if (!moved) {
+        if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;   // a tap, not a drag
+        snapshot(); moved = true;
+      }
+      var s = scale();
+      r.x = Math.max(0, Math.min(origin.x + dx / s.w, 1 - r.w));
+      r.y = Math.max(0, Math.min(origin.y + dy / s.h, 1 - r.h));
+      place(r);
+    });
+    r.el.addEventListener('pointerup', function(){ dragging = false; });
+    r.el.addEventListener('pointercancel', function(){ dragging = false; });
+  }
+
+  /* ================= export ================= */
+  function flatten(page){
+    var c = document.createElement('canvas');
+    c.width = page.base.width; c.height = page.base.height;
+    var ctx = c.getContext('2d');
+    ctx.drawImage(page.base, 0, 0);
+    ctx.fillStyle = '#000';
+    page.rects.forEach(function(r){
+      ctx.fillRect(
+        Math.round(r.x * c.width), Math.round(r.y * c.height),
+        Math.round(r.w * c.width), Math.round(r.h * c.height)
+      );
+    });
+    return c;
+  }
+
+  saveBtn.addEventListener('click', function(){
+    if (!pages.length) return;
+    var total = pages.reduce(function(n, p){ return n + p.rects.length; }, 0);
+    if (!total && !window.confirm('You have not marked anything yet. Save the file anyway?')) return;
+
+    deselect();
+    saveBtn.disabled = true;
+    say('Flattening pages…');
+
+    setTimeout(function(){
+      try {
+        if (!sourceIsPDF && pages.length === 1) {
+          flatten(pages[0]).toBlob(function(blob){
+            saveBlob(blob, baseName + '-redacted.png');
+            finish();
+          }, 'image/png');
+          return;
+        }
+        var jsPDF = window.jspdf.jsPDF, doc = null;
+        pages.forEach(function(p, i){
+          var data = flatten(p).toDataURL('image/jpeg', 0.92);
+          var fmt = [p.wPt, p.hPt], ori = p.wPt > p.hPt ? 'landscape' : 'portrait';
+          if (i === 0) doc = new jsPDF({ unit:'pt', format: fmt, orientation: ori });
+          else doc.addPage(fmt, ori);
+          doc.addImage(data, 'JPEG', 0, 0, p.wPt, p.hPt);
+        });
+        doc.save(baseName + '-redacted.pdf');
+        finish();
+      } catch (err) {
+        console.error(err);
+        say('Saving failed. Try a smaller file, or reload the page and start again.');
+        saveBtn.disabled = false;
+      }
+    }, 40);
+  });
+
+  function finish(){
+    say('Saved. The words under the boxes no longer exist in that file, and the metadata is gone with them.');
+    saveBtn.disabled = false;
+  }
+
+  function saveBlob(blob, name){
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
+  }
+
+  setMode('redact');
+})();
+</script>
+</body>
+</html>

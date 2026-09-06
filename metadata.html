@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>See the hidden metadata in your photo, then remove it — Blackout</title>
+<meta name="description" content="Read every EXIF tag stored inside a photo, including GPS coordinates, camera serial numbers and timestamps. Choose exactly what to strip. Runs entirely in your browser — nothing is uploaded.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<style>
+  #report{display:none}
+  .facts{
+    display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+    gap:1px;background:var(--g25);border:1px solid var(--g25);margin-bottom:34px;
+  }
+  .facts div{background:var(--paper);padding:12px 14px}
+  .facts dt{font-size:12px;color:var(--g70);margin-bottom:3px}
+  .facts dd{margin:0;font-family:var(--mono);font-size:14px;word-break:break-word}
+
+  .alarm{border:2px solid var(--ink);padding:18px 20px;margin:0 0 34px}
+  .alarm h3{margin:0 0 6px;font-size:20px}
+  .alarm p{margin:0 0 8px;font-size:16px;max-width:60ch}
+  .alarm .coords{font-family:var(--mono);font-size:17px;font-weight:600}
+
+  .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:26px}
+  .actions .spacer{flex:1}
+
+  .group{margin-bottom:34px}
+  .group h3{
+    margin:0;padding-bottom:8px;border-bottom:2px solid var(--ink);
+    display:flex;align-items:baseline;gap:10px;
+  }
+  .group h3 em{font-style:normal;font-family:var(--mono);font-size:13px;color:var(--g70);margin-left:auto}
+
+  .row{
+    display:grid;grid-template-columns:1fr 1fr auto;gap:14px;align-items:start;
+    padding:11px 0;border-bottom:1px solid var(--g12);
+  }
+  .row .k{font-size:15px;font-weight:500;word-break:break-word}
+  .row .v{font-family:var(--mono);font-size:13px;color:var(--g70);word-break:break-word;line-height:1.45}
+  .row .c{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--g70);white-space:nowrap}
+  .row input[type=checkbox]{width:19px;height:19px;accent-color:#000;margin:0}
+  .row.flagged .k::after{
+    content:'sensitive';font-family:var(--mono);font-size:11px;
+    background:var(--ink);color:var(--paper);padding:2px 6px;margin-left:8px;
+    display:inline-block;vertical-align:1px;font-weight:400;
+  }
+
+  .savebar{
+    border-top:2px solid var(--ink);padding-top:18px;margin-top:34px;
+    display:flex;gap:10px;flex-wrap:wrap;align-items:center;
+  }
+  .savebar p{margin:0;font-size:14px;color:var(--g70);flex:1;min-width:200px}
+
+  @media(max-width:640px){
+    .row{grid-template-columns:1fr auto;gap:6px 12px}
+    .row .k{grid-column:1}
+    .row .c{grid-column:2;grid-row:1}
+    .row .v{grid-column:1 / -1}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <a class="brand" href="index.html">
+      <span class="bar" aria-hidden="true"></span>
+      <b>Blackout</b>
+      <span>Nothing leaves<br>your browser</span>
+    </a>
+    <nav>
+      <a href="index.html">Redact a document</a>
+      <a href="metadata.html" aria-current="page">Inspect metadata</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="history.html">When it goes wrong</a>
+    </nav>
+  </header>
+
+  <h1>Your photo knows more than you do.</h1>
+  <p class="standfirst">Every picture your phone takes carries a hidden record: the exact coordinates where you stood, the second you pressed the shutter, the serial number of the camera, and often a small copy of the original image from before you edited it. Drop a photo below to read all of it, then decide line by line what gets deleted.</p>
+
+  <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose a photo to inspect">
+    <strong>Drop a photo here</strong>
+    <span>JPEG files carry the most metadata — or tap to choose</span>
+  </div>
+  <input type="file" id="file" accept="image/*" hidden>
+  <p class="assurance"><b>The file is read by this page, not by a server.</b> Nothing is uploaded, stored, or transmitted. If a website offers to strip your metadata but asks you to upload the photo first, it has your photo and its metadata.</p>
+
+  <p id="status" role="status"></p>
+
+  <div id="report">
+    <div class="facts" id="facts"></div>
+    <div id="alarm"></div>
+
+    <div class="actions">
+      <button class="btn small" id="selSensitive">Select everything sensitive</button>
+      <button class="btn small" id="selAll">Select all</button>
+      <button class="btn small" id="selNone">Select none</button>
+      <span class="spacer"></span>
+      <button class="btn small" id="newBtn">Different photo</button>
+    </div>
+
+    <div id="groups"></div>
+
+    <div class="savebar">
+      <p id="savenote"></p>
+      <button class="btn" id="stripAll">Remove everything</button>
+      <button class="btn solid" id="saveBtn">Save cleaned copy</button>
+    </div>
+  </div>
+
+  <article>
+    <h2>What is worth removing, and what is harmless</h2>
+    <p><strong>Location is the one that matters.</strong> GPS coordinates are precise to a few metres. A photo of a sofa posted to a marketplace listing can carry the address of the living room it sits in. If you remove nothing else, remove this.</p>
+    <p><strong>Timestamps place you somewhere.</strong> Capture time is often more revealing than location, because it establishes that a specific person was in a specific place at a specific moment.</p>
+    <p><strong>Serial numbers link your photos together.</strong> Body and lens serial numbers are unique to your hardware. Two photos posted under two different names, carrying the same camera serial, are provably the same photographer.</p>
+    <p><strong>The embedded thumbnail is the quiet one.</strong> Cameras store a small preview alongside the full image. Some editing software updates the main image but leaves the old thumbnail in place — which means a cropped or retouched photo can still contain a miniature of what it looked like before. This has exposed people who thought they had cropped someone out of frame.</p>
+    <p>Exposure settings, focal length, and colour profile are generally harmless and are worth keeping if you care about the photo. That is the reason this page lets you choose rather than just deleting everything.</p>
+    <p>If your document is a PDF or a scan rather than a photo, <a href="index.html">the redaction tool</a> destroys metadata as a side effect of flattening the page.</p>
+  </article>
+
+  <footer>
+    <span>Blackout</span>
+    <a href="index.html">Redact a document</a>
+    <a href="how-it-works.html">How it works</a>
+    <a href="history.html">When it goes wrong</a>
+  </footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/piexifjs@1.0.6/piexif.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  var $ = function(id){ return document.getElementById(id); };
+  var drop=$('drop'), fileInput=$('file'), report=$('report'), statusEl=$('status');
+
+  var originalDataURL = null, exifObj = null, currentFile = null, rows = [];
+
+  var SECTIONS = [
+    { key:'GPS',     title:'Location',            note:'where the photo was taken' },
+    { key:'0th',     title:'Image and device',    note:'camera, software, description' },
+    { key:'Exif',    title:'Capture settings',    note:'exposure, lens, timestamps' },
+    { key:'Interop', title:'Interoperability',    note:'colour space compatibility' },
+    { key:'1st',     title:'Embedded thumbnail',  note:'the small preview stored inside' }
+  ];
+
+  var SENSITIVE = /^(GPS|Make$|Model$|Software|DateTime|SubSecTime|BodySerial|LensSerial|LensMake|LensModel|CameraOwner|Artist|Copyright|ImageDescription|UserComment|HostComputer|MakerNote|XP|ImageUniqueID|OffsetTime)/;
+
+  function say(m){ statusEl.textContent = m || ''; }
+
+  /* ---------- intake ---------- */
+  drop.addEventListener('click', function(){ fileInput.click(); });
+  drop.addEventListener('keydown', function(e){
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+  });
+  ['dragenter','dragover'].forEach(function(ev){
+    drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.add('hot'); });
+  });
+  ['dragleave','drop'].forEach(function(ev){
+    drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.remove('hot'); });
+  });
+  drop.addEventListener('drop', function(e){
+    if (e.dataTransfer.files.length) load(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', function(){ if (this.files.length) load(this.files[0]); });
+  $('newBtn').addEventListener('click', function(){
+    fileInput.value=''; report.style.display='none'; drop.style.display='block'; say('');
+  });
+
+  function load(file){
+    currentFile = file;
+    say('Reading file…');
+    var fr = new FileReader();
+    fr.onload = function(){
+      originalDataURL = fr.result;
+      var img = new Image();
+      img.onload = function(){ build(img.naturalWidth, img.naturalHeight); };
+      img.onerror = function(){ build(null, null); };
+      img.src = originalDataURL;
+    };
+    fr.onerror = function(){ say('That file could not be read.'); };
+    fr.readAsDataURL(file);
+  }
+
+  /* ---------- helpers ---------- */
+  function tagName(ifd, id){
+    var T = window.piexif && window.piexif.TAGS;
+    if (T) {
+      var maps = [];
+      if (ifd === '0th' || ifd === '1st') maps = [T['0th'], T['Image'], T['1st']];
+      else if (ifd === 'Exif') maps = [T['Exif'], T['Photo']];
+      else if (ifd === 'GPS') maps = [T['GPS']];
+      else if (ifd === 'Interop') maps = [T['Interop'], T['Iop']];
+      for (var i = 0; i < maps.length; i++) {
+        if (maps[i] && maps[i][id] && maps[i][id].name) return maps[i][id].name;
+      }
+    }
+    return 'Tag ' + id;
+  }
+
+  function fmt(v){
+    if (v === null || v === undefined) return '—';
+    if (typeof v === 'number') return String(Math.round(v * 1e6) / 1e6);
+    if (typeof v === 'string') return v.length > 140 ? v.slice(0,140) + '…' : (v || '(empty)');
+    if (Array.isArray(v)) {
+      if (v.length === 2 && typeof v[0] === 'number' && typeof v[1] === 'number') {
+        return v[1] ? (Math.round(v[0]/v[1] * 1e4)/1e4) + '  [' + v[0] + '/' + v[1] + ']' : v.join('/');
+      }
+      if (v.length > 20) return '(' + v.length + ' values)';
+      return v.map(fmt).join(', ');
+    }
+    return String(v);
+  }
+
+  function toDeg(arr, ref){
+    if (!arr || arr.length < 3) return null;
+    function n(r){ return Array.isArray(r) ? (r[1] ? r[0]/r[1] : 0) : Number(r) || 0; }
+    var d = n(arr[0]) + n(arr[1])/60 + n(arr[2])/3600;
+    if (ref === 'S' || ref === 'W') d = -d;
+    return Math.round(d * 1e6) / 1e6;
+  }
+
+  function bytes(n){
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n/1024).toFixed(1) + ' KB';
+    return (n/1048576).toFixed(2) + ' MB';
+  }
+
+  /* ---------- build the report ---------- */
+  function build(w, h){
+    rows = [];
+    exifObj = null;
+    $('groups').innerHTML = '';
+    $('alarm').innerHTML = '';
+
+    /* file facts — always available, always real metadata */
+    var facts = [
+      ['File name', currentFile.name],
+      ['Type', currentFile.type || 'unknown'],
+      ['Size', bytes(currentFile.size)],
+      ['Dimensions', (w && h) ? w + ' × ' + h + ' px' : 'not readable'],
+      ['Last modified', currentFile.lastModified ? new Date(currentFile.lastModified).toLocaleString() : 'unknown']
+    ];
+    $('facts').innerHTML = facts.map(function(f){
+      return '<div><dt>' + f[0] + '</dt><dd>' + esc(String(f[1])) + '</dd></div>';
+    }).join('');
+
+    var isJPEG = /^data:image\/jpeg/.test(originalDataURL);
+
+    if (!isJPEG) {
+      $('alarm').innerHTML =
+        '<div class="alarm"><h3>No EXIF block this page can read</h3>' +
+        '<p>Detailed metadata reading works on JPEG files, which is what almost every phone camera produces. ' +
+        'This file is a different format, so there are no individual tags to show. You can still use ' +
+        '<b>Remove everything</b> below — it redraws the image from scratch, which discards any metadata the format was carrying.</p></div>';
+      $('savenote').textContent = 'Saving will re-encode the image and drop all embedded data.';
+      $('saveBtn').disabled = true;
+      show();
+      return;
+    }
+    $('saveBtn').disabled = false;
+
+    try {
+      exifObj = window.piexif.load(originalDataURL);
+    } catch (err) {
+      console.error(err);
+      exifObj = null;
+    }
+
+    var count = 0;
+    if (exifObj) {
+      SECTIONS.forEach(function(sec){
+        var ifd = exifObj[sec.key];
+        if (!ifd) return;
+        var ids = Object.keys(ifd);
+        if (!ids.length) return;
+        count += ids.length;
+        $('groups').appendChild(renderGroup(sec, ifd, ids));
+      });
+
+      if (exifObj.thumbnail) {
+        var sec = { key:'thumbnail', title:'Embedded preview image', note:'a full picture hidden inside the file' };
+        var g = groupShell(sec, '1 item');
+        g.appendChild(makeRow('thumbnail', 'thumbnail',
+          'A complete miniature copy of the image, ' + bytes(exifObj.thumbnail.length) + ' in size', true));
+        $('groups').appendChild(g);
+        count++;
+      }
+    }
+
+    if (!count) {
+      $('alarm').innerHTML =
+        '<div class="alarm"><h3>This file carries no EXIF metadata</h3>' +
+        '<p>Either it never had any, or something already stripped it. Note that the file facts above still ' +
+        'travel with the file wherever you send it — the name and the modification date are metadata too.</p></div>';
+    } else {
+      gpsAlarm();
+    }
+
+    updateNote();
+    show();
+    say('');
+  }
+
+  function show(){
+    report.style.display = 'block';
+    drop.style.display = 'none';
+    report.scrollIntoView({ behavior:'smooth', block:'start' });
+  }
+
+  function groupShell(sec, meta){
+    var g = document.createElement('div');
+    g.className = 'group';
+    var h = document.createElement('h3');
+    h.textContent = sec.title;
+    var em = document.createElement('em');
+    em.textContent = meta;
+    h.appendChild(em);
+    g.appendChild(h);
+    return g;
+  }
+
+  function renderGroup(sec, ifd, ids){
+    var g = groupShell(sec, ids.length + (ids.length === 1 ? ' tag' : ' tags'));
+    ids.forEach(function(id){
+      var name = tagName(sec.key, id);
+      g.appendChild(makeRow(sec.key, id, name + '\u0000' + fmt(ifd[id]), SENSITIVE.test(name)));
+    });
+    return g;
+  }
+
+  function makeRow(ifdKey, id, payload, flagged){
+    var parts = payload.split('\u0000');
+    var name = parts.length > 1 ? parts[0] : (ifdKey === 'thumbnail' ? 'Preview image' : 'Item');
+    var value = parts.length > 1 ? parts[1] : parts[0];
+
+    var row = document.createElement('div');
+    row.className = 'row' + (flagged ? ' flagged' : '');
+
+    var k = document.createElement('div'); k.className = 'k'; k.textContent = name;
+    var v = document.createElement('div'); v.className = 'v'; v.textContent = value;
+
+    var c = document.createElement('label'); c.className = 'c';
+    var box = document.createElement('input');
+    box.type = 'checkbox'; box.checked = !!flagged;
+    box.addEventListener('change', updateNote);
+    c.appendChild(box);
+    c.appendChild(document.createTextNode('Remove'));
+
+    row.appendChild(k); row.appendChild(v); row.appendChild(c);
+    rows.push({ ifd: ifdKey, id: id, box: box, flagged: !!flagged });
+    return row;
+  }
+
+  function gpsAlarm(){
+    var gps = exifObj && exifObj.GPS;
+    if (!gps) return;
+    var lat = toDeg(gps[2], gps[1]), lon = toDeg(gps[4], gps[3]);
+    if (lat === null || lon === null) return;
+    $('alarm').innerHTML =
+      '<div class="alarm"><h3>This photo records where it was taken</h3>' +
+      '<p>Anyone who receives this file can read these coordinates in a few seconds.</p>' +
+      '<p class="coords">' + lat + ', ' + lon + '</p></div>';
+  }
+
+  function esc(s){
+    return s.replace(/[&<>"]/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c];
+    });
+  }
+
+  /* ---------- selection ---------- */
+  function setAll(fn){ rows.forEach(function(r){ r.box.checked = fn(r); }); updateNote(); }
+  $('selAll').addEventListener('click', function(){ setAll(function(){ return true; }); });
+  $('selNone').addEventListener('click', function(){ setAll(function(){ return false; }); });
+  $('selSensitive').addEventListener('click', function(){ setAll(function(r){ return r.flagged; }); });
+
+  function updateNote(){
+    var n = rows.filter(function(r){ return r.box.checked; }).length;
+    $('savenote').textContent = rows.length
+      ? n + ' of ' + rows.length + ' items marked for removal. Everything unmarked stays in the file.'
+      : 'Nothing to remove.';
+  }
+
+  /* ---------- saving ---------- */
+  $('saveBtn').addEventListener('click', function(){
+    if (!exifObj) return;
+    try {
+      var out = { '0th':{}, 'Exif':{}, 'GPS':{}, 'Interop':{}, '1st':{} };
+      var dropThumb = false;
+
+      rows.forEach(function(r){
+        if (r.ifd === 'thumbnail') { if (r.box.checked) dropThumb = true; return; }
+        if (r.box.checked) return;
+        if (!out[r.ifd]) out[r.ifd] = {};
+        out[r.ifd][r.id] = exifObj[r.ifd][r.id];
+      });
+
+      if (!dropThumb && exifObj.thumbnail) out.thumbnail = exifObj.thumbnail;
+      else delete out['1st'];
+
+      var cleaned = window.piexif.insert(window.piexif.dump(out), originalDataURL);
+      download(cleaned, base() + '-cleaned.jpg');
+      say('Saved. Reopen the new file here to confirm only what you kept is left.');
+    } catch (err) {
+      console.error(err);
+      say('That did not work. Try Remove everything instead, which rebuilds the image from scratch.');
+    }
+  });
+
+  $('stripAll').addEventListener('click', function(){
+    var img = new Image();
+    img.onload = function(){
+      var c = document.createElement('canvas');
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      c.getContext('2d').drawImage(img, 0, 0);
+      download(c.toDataURL('image/jpeg', 0.95), base() + '-stripped.jpg');
+      say('Saved with every trace of embedded data removed. The image was redrawn from its pixels alone.');
+    };
+    img.onerror = function(){ say('This image could not be redrawn in the browser. Try a JPEG or PNG.'); };
+    img.src = originalDataURL;
+  });
+
+  function base(){ return (currentFile.name || 'photo').replace(/\.[^.]+$/, '') || 'photo'; }
+
+  function download(dataURL, name){
+    var parts = dataURL.split(','), mime = (parts[0].match(/:(.*?);/) || [])[1] || 'image/jpeg';
+    var bin = atob(parts[1]), n = bin.length, u8 = new Uint8Array(n);
+    while (n--) u8[n] = bin.charCodeAt(n);
+    var url = URL.createObjectURL(new Blob([u8], { type: mime }));
+    var a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 5000);
+  }
+})();
+</script>
+</body>
+</html>

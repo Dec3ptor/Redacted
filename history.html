@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Twenty years of redaction failures — Blackout</title>
+<meta name="description" content="Court filings, defence reports and screening manuals where black boxes were defeated by copy and paste. What went wrong each time, and the pattern that connects them.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <a class="brand" href="index.html">
+      <span class="bar" aria-hidden="true"></span>
+      <b>Blackout</b>
+      <span>Nothing leaves<br>your browser</span>
+    </a>
+    <nav>
+      <a href="index.html">Redact a document</a>
+      <a href="metadata.html">Inspect metadata</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="history.html" aria-current="page">When it goes wrong</a>
+    </nav>
+  </header>
+
+  <h1>Twenty years of the same mistake</h1>
+  <p class="standfirst">Intelligence agencies, defence ministries, federal prosecutors and the legal teams of the largest companies in the world have all shipped documents where the black boxes could be defeated by pressing copy. The pattern is remarkably consistent.</p>
+
+  <article>
+
+    <p>What follows is not a list of incompetent people. Several of these documents were prepared by organisations with serious security cultures and formal review processes. That is the interesting part — the failure survives review, because a reviewer looking at the page sees exactly what the author saw, which is a page that appears correctly redacted.</p>
+
+    <ul class="caselist">
+
+      <li>
+        <span class="year">2005</span>
+        <span class="case">The Calipari report</span>
+        <p>A United States military report into the shooting of Nicola Calipari, an Italian intelligence officer killed at a checkpoint in Iraq, was published with sections blacked out. The underlying text came straight back out of the file. Beyond the operational detail, the recovered text exposed the identity of another Italian agent who had been in the car — a person the redactions existed specifically to protect. It became the standard teaching example, and it did not stop the mistake from repeating for the next twenty years.</p>
+      </li>
+
+      <li>
+        <span class="year">2009</span>
+        <span class="case">The TSA screening manual</span>
+        <p>A version of the Transportation Security Administration's standard operating procedures for passenger screening was posted publicly on a government website with improper redactions. The concealed passages, covering screening procedures and exemptions, were extractable from the file. The incident prompted an Inspector General review and a fair amount of congressional attention.</p>
+      </li>
+
+      <li>
+        <span class="year">2009</span>
+        <span class="case">A valuation in a court transcript</span>
+        <p>The Associated Press reported that it had recovered a redacted figure — an estimate of Facebook's valuation — from a court transcript by cutting and pasting the blacked-out portion. A number that had been sealed by the court was readable by anyone who tried the most obvious thing.</p>
+      </li>
+
+      <li>
+        <span class="year">2011</span>
+        <span class="case">A Ministry of Defence submarine document</span>
+        <p>A UK Ministry of Defence report was released with sections apparently redacted. The hidden content, relating to submarine security, was recoverable by copying the blacked-out text. The same failure mode, a different continent, a different decade.</p>
+      </li>
+
+      <li>
+        <span class="year">2011</span>
+        <span class="case">Apple v. Samsung</span>
+        <p>A federal judge's opinion in the long-running patent litigation contained passages intended to be redacted. Because of how the document was produced, copying the text out revealed them. Commercially sensitive material that both parties had fought to keep sealed was sitting in the public file.</p>
+      </li>
+
+      <li>
+        <span class="year">2019</span>
+        <span class="case">The Manafort filing</span>
+        <p>The most widely reported case, and the one that finally made this common knowledge. Lawyers for Paul Manafort filed a response to allegations that he had breached his cooperation agreement. Parts of the filing appeared blacked out. Reporters recovered the text by copying and pasting it, and the recovered passages revealed genuinely new information: that Manafort had shared 2016 presidential campaign polling data with Konstantin Kilimnik, that the two had met in Madrid, and that they had discussed a Ukraine peace plan. These were not embarrassing details. They were material facts in an active federal investigation, disclosed by a formatting error.</p>
+      </li>
+
+      <li>
+        <span class="year">2023</span>
+        <span class="case">Cropped screenshots that were not cropped</span>
+        <p>A vulnerability in the screenshot editors built into Google's Pixel phones and Windows 11 meant that when you cropped an image and saved over the original, the cropped-away portion was not always removed from the file. The tool wrote a shorter image but left the tail of the old data in place, and it could be reconstructed. Millions of screenshots had been shared on the assumption that cropping deletes. It is worth sitting with, because cropping feels even more final than a black box, and it was not.</p>
+      </li>
+
+      <li>
+        <span class="year">Recently</span>
+        <span class="case">Crowdsourced unredaction</span>
+        <p>The newest development is that this is no longer a specialist trick. When large batches of redacted documents are released, ordinary readers now attempt the copy and paste method as a matter of routine, and share the results. A second technique circulates alongside it: photographing or screenshotting a scanned page and then pushing exposure and brightness to the extremes, which can render semi-transparent digital ink legible. Whatever you think of the practice, the operational lesson is fixed — assume that the most obvious attack on your redaction will be attempted immediately, by a large number of people, within hours of publication.</p>
+      </li>
+
+    </ul>
+
+    <h2>The pattern</h2>
+    <p>Nearly every case above shares one structure. Someone used a drawing or markup tool rather than a redaction tool. Both produce an identical-looking black rectangle. One deletes the content underneath and the other does not, and the interface gives you no way to tell which you just did.</p>
+    <p class="pullquote">The failure is invisible at exactly the moment you would want to catch it, and obvious the second it is too late.</p>
+    <p>This is a design problem more than a human one. If saving a document with fake redactions produced any visible difference at all — a warning, a different appearance, anything — most of these incidents would not exist. Instead the feedback arrives days later, from a journalist.</p>
+
+    <h2>What to take from it</h2>
+    <p>The practical conclusion is not to be more careful. Careful people are on this list. The conclusion is to <strong>verify the output rather than trust the process</strong>. Open the finished file, select everything, paste it into a text editor, and look at what comes out. That single check would have caught every case above, and it takes about ten seconds.</p>
+    <p><a href="how-it-works.html">The mechanics of why this happens are here</a>, and if you would rather not have a text layer to worry about at all, <a href="index.html">the tool on this site removes it entirely</a>.</p>
+
+    <p class="note" style="margin-top:34px">Sources for these cases are widely available in contemporaneous reporting and in the American Bar Association's own write-up of redaction failures. Verify specifics before citing them anywhere that matters.</p>
+
+  </article>
+
+  <footer>
+    <span>Blackout</span>
+    <a href="index.html">Redact a document</a>
+    <a href="metadata.html">Inspect metadata</a>
+    <a href="how-it-works.html">How it works</a>
+  </footer>
+</div>
+</body>
+</html>

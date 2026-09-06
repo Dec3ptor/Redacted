@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why black boxes don't hide text in a PDF — Blackout</title>
+<meta name="description" content="A plain explanation of what a PDF actually stores, why drawing a black rectangle leaves the words intact, why flattening is not enough, and how to check whether your own redaction worked.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <a class="brand" href="index.html">
+      <span class="bar" aria-hidden="true"></span>
+      <b>Blackout</b>
+      <span>Nothing leaves<br>your browser</span>
+    </a>
+    <nav>
+      <a href="index.html">Redact a document</a>
+      <a href="metadata.html">Inspect metadata</a>
+      <a href="how-it-works.html" aria-current="page">How it works</a>
+      <a href="history.html">When it goes wrong</a>
+    </nav>
+  </header>
+
+  <h1>Why a black box hides nothing</h1>
+  <p class="standfirst">The mistake is not carelessness. It is that the software shows you a convincing picture of a solved problem, and gives you no reason to doubt it.</p>
+
+  <article>
+
+    <h2>A PDF is not a picture of a page</h2>
+    <p>It is easy to assume a PDF works like a photograph: whatever you can see is what is in there. It does not. A PDF is closer to a set of instructions for drawing a page — a list of objects, each with its own position and properties. There are text objects that say which characters to place and where. There are font definitions. There are images, vector shapes, annotations, form fields, and layers, all stacked in a defined order.</p>
+    <p>When you open the file, a reader follows those instructions from bottom to top and produces the page you see. The word "confidential" is not a shape on the page. It is a text object containing those actual characters, and it stays a text object no matter what gets drawn on top of it.</p>
+
+    <h2>So what happens when you draw a rectangle</h2>
+    <p>You open the document in Preview, Word, or Acrobat's markup tools. You draw a filled black rectangle over a sensitive line. The rectangle looks solid and complete.</p>
+    <p>What you have done is add one more object to the list, positioned above the text, coloured black. The reader draws the text, then draws your rectangle over it. Visually the text is hidden. Structurally nothing has been touched.</p>
+    <p class="pullquote">The words are still there. You have put a sticker over them, and the sticker travels in the same envelope.</p>
+    <p>Which means anyone who receives the file can get the text back in several ways, none of which require skill or special software. They can drag a cursor across the black area and copy it, because selection reads the text layer and ignores what is drawn on top. They can run the file through any text extraction tool and read the whole thing as plain text. In some cases they can simply click the rectangle and drag it aside, because an annotation added by a markup tool remains an independent, movable object.</p>
+
+    <h2>Flattening helps less than people think</h2>
+    <p>The common advice is to flatten the document. Flattening merges annotations and separate layers down into the page content, and it does fix one specific problem: nobody can drag your rectangle out of the way any more, because it is no longer a separate object.</p>
+    <p>But flattening does not delete anything. The text objects underneath are still text objects. A flattened PDF with black boxes over it will still surrender every hidden word to a copy and paste. This is the trap that catches people who did try to do it properly — they took the extra step, they were told the extra step was the fix, and the words came out anyway.</p>
+
+    <h2>The two approaches that actually work</h2>
+    <p><strong>Remove the content.</strong> A true redaction tool finds the text objects in the covered region and deletes them from the file, then draws the black box to mark the removal. This is what the dedicated Redact function in professional PDF software does, and it is the right approach when the output needs to stay searchable and selectable everywhere you did not redact. It is also the approach where a misconfigured tool, or a user who uses the markup pen instead of the redaction tool, produces a file that looks identical to a correct one and is not.</p>
+    <p><strong>Destroy the layer entirely.</strong> The blunter method: throw away the document structure and keep only the appearance. Each page is rendered to a flat grid of pixels, the black areas are painted onto those pixels, and a new file is built containing nothing but the resulting images. There is no text object left anywhere in the file, so there is nothing to recover — not under your boxes and not anywhere else.</p>
+    <p>This second method is what <a href="index.html">the tool on this site</a> does. It is less sophisticated and it is harder to get wrong, which for most people is the correct trade.</p>
+
+    <h2>Step by step, what happens to your file here</h2>
+    <ol>
+      <li>Your browser reads the file from your device. Nothing is sent anywhere — there is no server involved in any part of this.</li>
+      <li>Each page is rendered at double resolution onto a canvas. At this moment the page stops being a document and becomes an array of pixel values. The text objects, fonts, annotations, form fields, hidden layers, and embedded metadata are not carried across, because a canvas has no concept of them.</li>
+      <li>The boxes you draw are painted directly onto that pixel data as solid black.</li>
+      <li>A new PDF is assembled containing only those flattened images, one per page.</li>
+    </ol>
+    <p>The result has no text layer at all. That is the point, and it is also the cost.</p>
+
+    <h2>What you give up</h2>
+    <p>Be clear about this before you rely on it. The file you get back cannot be searched or selected, because there are no characters in it — only pictures of characters. It will usually be larger than the original. Screen readers cannot read it, which matters if the document is going to someone who needs assistive technology, or into a system with accessibility requirements. And because the whole page is re-rendered, very fine detail can soften slightly.</p>
+    <p>If you need the unredacted parts of the document to stay selectable, use a proper content-removal redaction tool instead. If you need certainty that nothing survives, rasterising is the safer choice.</p>
+
+    <h2>How to check any redaction, including this one</h2>
+    <p>Never trust the appearance. Test the file you are about to send:</p>
+    <ul>
+      <li><strong>The copy and paste test.</strong> Open the finished file, select the whole page, copy, and paste into a plain text editor. If any text appears, the document still contains a text layer. If nothing appears, there is nothing to extract.</li>
+      <li><strong>The search test.</strong> Use the reader's find function to search for a word you redacted. A match means the word is still in the file.</li>
+      <li><strong>The drag test.</strong> Click on each black box and try to move it. If it moves, it is an annotation sitting on top of live content.</li>
+      <li><strong>The brightness test.</strong> For scans and screenshots, open the image and push exposure and brightness to the extreme. Ink that was applied semi-transparently, or a marker pen used on paper, can become readable under adjustment.</li>
+    </ul>
+    <p>One more thing that people forget: redacting the visible page does nothing about what is stored invisibly alongside it. Author names, revision history, and original file paths sit in document metadata, and photographs carry coordinates and timestamps. <a href="metadata.html">You can read exactly what your own images are carrying here.</a></p>
+    <p>If you want to see how consequential this gets when a large organisation gets it wrong, <a href="history.html">the record is long and unusually well documented</a>.</p>
+
+  </article>
+
+  <footer>
+    <span>Blackout</span>
+    <a href="index.html">Redact a document</a>
+    <a href="metadata.html">Inspect metadata</a>
+    <a href="history.html">When it goes wrong</a>
+  </footer>
+</div>
+</body>
+</html>
