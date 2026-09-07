@@ -1,0 +1,38 @@
+/* Reverse-a-file page. Deliberately narrow: one job, one path through it. */
+
+.filestrip{display:flex;align-items:baseline;gap:14px;border-bottom:1px solid var(--g25);padding-bottom:10px;margin-bottom:16px}
+.filestrip .fname{font-family:var(--mono);font-size:13px;color:var(--g70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+
+.keybar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;border:2px solid var(--ink);padding:10px}
+.keybar input{
+  flex:1 1 260px;min-width:0;font-family:var(--mono);font-size:15px;line-height:1;color:var(--ink);
+  padding:12px;border:1.5px solid var(--ink);border-radius:0;background:var(--paper);
+  -webkit-appearance:none;appearance:none;
+}
+.keybar input::placeholder{color:var(--g50);font-family:var(--sans)}
+
+.hint{font-size:15px;color:var(--g70);margin:14px 0 0;max-width:var(--measure)}
+.note{font-size:14px;color:var(--g70);margin:14px 0 0;max-width:var(--measure)}
+.note b{color:var(--ink);font-weight:600}
+
+.facts{border:1px solid var(--ink);padding:4px 16px;margin:0 0 16px}
+.facts div{display:flex;gap:16px;padding:9px 0;border-bottom:1px solid var(--g12);font-size:15px}
+.facts div:last-child{border-bottom:0}
+.facts .k{color:var(--g70);flex:0 0 40%;max-width:210px}
+.facts .v{font-family:var(--mono);font-size:13.5px;word-break:break-word}
+
+.actions{display:flex;gap:10px;flex-wrap:wrap}
+
+.preview{margin-top:22px;border:1px solid var(--g25)}
+.preview .pvlabel{
+  font-family:var(--mono);font-size:12px;color:var(--g70);
+  padding:8px 12px;border-bottom:1px solid var(--g25);
+}
+.preview img,.preview canvas{display:block;width:100%;height:auto;background:#fff}
+
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+@media(max-width:640px){
+  .facts .k{flex:0 0 100%;max-width:none}
+  .facts div{flex-direction:column;gap:3px}
+}

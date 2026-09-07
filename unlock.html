@@ -1,0 +1,61 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Reverse a Blackout file — Blackout</title><meta name="description" content="Open a reversible Blackout file with its recovery key to restore the exact original document, or strip the encrypted recovery payload to make the redaction permanent. Runs entirely in your browser."><link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap" rel="stylesheet"><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="unlock.css"></head><body><div class="wrap">
+
+<header class="masthead"><a class="brand" href="index.html"><span class="bar" aria-hidden="true"></span><b>Blackout</b><span>Nothing leaves<br>your browser</span></a><nav><a href="index.html">Redact a document</a><a href="unlock.html" aria-current="page">Reverse a file</a><a href="metadata.html">Inspect metadata</a><a href="how-it-works.html">How it works</a><a href="history.html">When it goes wrong</a></nav></header>
+
+<h1>Reverse a redaction you made.</h1>
+<p class="standfirst">A reversible Blackout file carries the exact original inside it, encrypted. With the recovery key, this page brings the original back. Without it, nothing here can read the file — and neither can anyone else.</p>
+
+<div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose a reversible Blackout file"><strong>Drop a reversible Blackout file here</strong><span>or tap to choose a PDF or PNG</span></div>
+<input type="file" id="file" accept="application/pdf,image/png" hidden>
+
+<p class="assurance"><b>This page does the work, not a server.</b> The file and the key are read by your own browser. Neither is uploaded, logged, or kept after you close the tab.</p>
+
+<div id="panel" hidden>
+  <div class="filestrip"><span class="fname" id="fname"></span><button class="btn small" id="newBtn" type="button">Open another file</button></div>
+
+  <div id="found" hidden>
+    <div class="keybar">
+      <label class="vh" for="key">Recovery key</label>
+      <input id="key" type="password" placeholder="Recovery key — the BO2-… key or your passphrase" autocomplete="off" spellcheck="false">
+      <button class="btn" id="showKey" type="button">Show</button>
+      <button class="btn solid" id="unlock" type="button">Unlock</button>
+    </div>
+    <p class="hint" id="hint">This file contains an encrypted original. Enter the recovery key you saved when you redacted it.</p>
+  </div>
+
+  <div id="opened" hidden>
+    <div class="facts" id="facts"></div>
+    <div class="actions">
+      <button class="btn solid" id="saveOriginal" type="button">Save exact original</button>
+      <button class="btn" id="makePermanent" type="button">Make permanent</button>
+    </div>
+    <p class="note" id="permNote"><b>Make permanent</b> writes a copy of the redacted file with the encrypted original removed. The redaction stays; the recovery does not. Use it before the file leaves your control, so no key can ever reopen it.</p>
+    <div class="preview" id="preview" hidden><div class="pvlabel">Recovered original</div><div id="pvbody"></div></div>
+  </div>
+</div>
+
+<p id="status" role="status"></p>
+
+<article>
+  <h2>What is actually in the file</h2>
+  <p>A reversible file is the flattened redaction everyone can see, plus one encrypted block that holds the exact bytes of the original document. The block is sealed with AES-256-GCM. The key never travels with the file, is never stored by this site, and is never sent anywhere.</p>
+  <p>Without the key that block is indistinguishable from noise, and the visible page is a picture — the covered words are not in the text layer any more than they are in a permanent redaction. With the key, the original comes back byte for byte.</p>
+
+  <h2>When to use reversible, and when not to</h2>
+  <p>Reversible is for a file you still control: a draft going round your own team, a copy held for a case where a court may later order the original produced, a document you may need to re-redact differently. The value is that one file serves both purposes and the original cannot drift out of sync with it.</p>
+  <p><strong>It is not the mode for the final copy you hand to the other side.</strong> The original travels inside the file, so anyone who ends up with both the file and the key has everything, and a file already sent cannot be recalled. Redact permanently for that, or use <b>Make permanent</b> here to strip the recovery block before the file goes out.</p>
+  <p>The honest summary: reversible trades a smaller blast radius for a recoverable one. That trade is worth making inside your own boundary and worth refusing outside it.</p>
+
+  <h2>If the key is lost</h2>
+  <p>There is no recovery, no reset, and no back door — that is the point of the design, and it is what makes the encrypted block safe to ship inside a document. Keep the key somewhere separate from the file itself. <a href="how-it-works.html">How it works</a> has the full account.</p>
+</article>
+
+<footer><span>Blackout</span><a href="index.html">Redact a document</a><a href="how-it-works.html">How it works</a><a href="history.html">When it goes wrong</a></footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="brand-config.js"></script>
+<script src="blackout-core.js"></script>
+<script src="unlock.js"></script>
+</body></html>
