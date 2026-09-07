@@ -18,6 +18,17 @@ function bytes(n){
   return (i?n.toFixed(1):n)+' '+u[i];
 }
 
+/* Someone who clicked the mark inside a document lands here with ?from=mark.
+   The file itself cannot follow them — a page has no access to the document a
+   link was clicked in, and there is no browser API that would give it one — so
+   the honest thing is to lead with the file prompt and say why. */
+if(new URLSearchParams(location.search).get('from')==='mark'){
+  $('arrived').hidden=false;
+  document.title='Unlock your file — Blackout';
+  try{drop.focus({preventScroll:true});}catch(e){drop.focus();}
+  say('Choose the file you just came from, then enter its recovery key.');
+}
+
 /* ---------- intake ---------- */
 drop.onclick=function(){fileInput.click();};
 drop.onkeydown=function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();fileInput.click();}};
@@ -190,7 +201,8 @@ $('makePermanent').onclick=async function(){
       blob=new Blob([await BlackoutCore.stripPdfRecovery(currentBytes)],{type:'application/pdf'});
     }else{
       name=base+'-permanent.png';
-      blob=await BlackoutCore.stripPngRecovery(currentBytes);
+      // strips the chunk and repaints the mark, which is baked into the pixels
+      blob=await BlackoutCore.makeImagePermanent(currentBytes);
     }
     /* Prove it against the raw bytes. Following the catalog reference would
        pass on a file that still carries an orphaned copy of the ciphertext,

@@ -48,35 +48,13 @@ async function stripPdfRecovery(pdfBytes){var P=window.PDFLib;if(!P)throw new Er
   var doc=await P.PDFDocument.load(pdfBytes,{updateMetadata:false});
   var k=P.PDFName.of('BlackoutRecovery'),ref=doc.catalog.get(k);
   if(ref){doc.catalog.delete(k);if(ref instanceof P.PDFRef)doc.context.delete(ref);}
-  relinkPdfWatermark(doc);
+  await applyPdfWatermark(doc,false);   // removes the reversible mark, stamps the permanent one
   return new Uint8Array(await doc.save({useObjectStreams:true,addDefaultPage:false,updateFieldAppearances:false}));}
 
 /* A file that was reversible carries a mark linking to the unlock page. Once
    the recovery is gone that link is wrong, so repoint it at the app. Only the
    annotation changes — the drawn mark is identical in both modes, so no page
    content is touched. */
-function relinkPdfWatermark(doc){
-  if(!CFG.watermarkEnabled)return doc;
-  var P=window.PDFLib,base=siteBase();
-  if(!base)return doc;
-  doc.getPages().forEach(function(page){
-    var key=P.PDFName.of('Annots'),annots=page.node.get(key);
-    if(!annots||typeof annots.asArray!=='function')return;
-    var kept=annots.asArray().filter(function(r){
-      try{
-        var a=doc.context.lookup(r),act=a&&a.get&&a.get(P.PDFName.of('A'));
-        var uri=act&&act.get&&act.get(P.PDFName.of('URI'));
-        var v=uri&&uri.asString?uri.asString():'';
-        if(v.indexOf(base)!==0)return true;         // not ours, leave it
-        act.set(P.PDFName.of('URI'),P.PDFString.of(base));
-        return true;
-      }catch(e){return true;}
-    });
-    page.node.set(key,doc.context.obj(kept));
-  });
-  return doc;
-}
-
 /* The honest check after stripping: the envelope magic must not appear
    anywhere in the file. Following the catalog reference is not enough — an
    orphaned stream is still readable by anything that parses objects directly. */
@@ -87,37 +65,270 @@ function hasRecoveryBytes(bytes){
   return false;
 }
 async function extractPdfRecovery(pdfBytes){var P=window.PDFLib;if(!P)return null;try{var doc=await P.PDFDocument.load(pdfBytes,{updateMetadata:false});var ref=doc.catalog.get(P.PDFName.of('BlackoutRecovery'));if(!ref)return null;var raw=doc.context.lookup(ref);if(!raw)return null;if(raw.contents)return new Uint8Array(raw.contents);if(typeof raw.getContents==='function')return new Uint8Array(raw.getContents());return null;}catch(e){return null;}}
+/* ============================================================
+   The exported mark.
+
+   Two lines, bottom-right:
+
+       ▬▬  Redacted with Blackout
+       [ REVERSIBLE ]  example.com/unlock.html
+
+   The second line only appears on a reversible file. Because the two
+   variants differ in what they say, making a file permanent has to remove
+   the old mark rather than cover it — so the mark is drawn into its own
+   content stream, referenced from the page, and deleted outright when the
+   file is made permanent. Painting a box over text we no longer want is
+   the one thing this tool exists to tell people not to do.
+   ============================================================ */
+var MARK_KEY='BlackoutMark';
+var CAP=.717;              // Helvetica cap height, in ems
+var TRACK=.12;             // letterspacing on the REVERSIBLE chip, in ems
+
 function siteBase(){var u=CFG.siteUrl||'';return u&&u.slice(-1)!=='/'?u+'/':u;}
-/* The mark reads the same either way; only where it points changes. A
-   reversible file links to the page that reverses it, a permanent one to the
-   app. Keeping the drawn text identical means making a file permanent never
-   has to paint over text that is already in the content stream — covering
-   text with a box is the exact mistake this tool exists to prevent. */
-function brandTarget(reversible){var b=siteBase();if(!b)return'';return reversible?b+(CFG.unlockPath||'unlock.html'):b;}
-function prettyUrl(u){return String(u||'').replace(/^https?:\/\//,'').replace(/\/$/,'');}
+/* The link carries a marker so the unlock page knows the reader arrived from
+   a document rather than from the site, and can lead with the file prompt. */
+function brandTarget(reversible){
+  var b=siteBase();if(!b)return'';
+  return reversible?b+(CFG.unlockPath||'unlock.html')+'?from=mark':b;
+}
+function prettyUrl(u){return String(u||'').replace(/^https?:\/\//,'').replace(/\?.*$/,'').replace(/\/$/,'');}
 function brandLines(reversible){
   return{
     top:'Redacted with '+(CFG.productName||'Blackout'),
-    bottom:CFG.website||prettyUrl(siteBase()),
+    chip:reversible?'REVERSIBLE':'',
+    bottom:CFG.website||prettyUrl(brandTarget(reversible)||siteBase()),
     url:brandTarget(reversible)
   };
 }
-function applyCanvasWatermark(canvas){if(!CFG.watermarkEnabled)return canvas;var ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height,scale=Math.max(.55,Math.min(2.2,Math.min(w,h)/900)),pad=Math.round(12*scale),barW=Math.round(24*scale),barH=Math.max(4,Math.round(7*scale)),font=Math.max(11,Math.round(14*scale)),small=Math.max(9,Math.round(11*scale)),lines=brandLines(false);ctx.save();ctx.font='600 '+font+'px Arial, sans-serif';var tw=ctx.measureText(lines.top).width,bw=lines.bottom?(function(){ctx.font='500 '+small+'px Arial, sans-serif';return ctx.measureText(lines.bottom).width;})():0;var boxW=Math.ceil(Math.max(barW+8*scale+tw,bw)+pad*2),boxH=Math.ceil((lines.bottom?font+small+9*scale:font+6*scale)+pad*2),x=w-boxW-Math.round(10*scale),y=h-boxH-Math.round(10*scale);ctx.fillStyle='rgba(255,255,255,.90)';ctx.fillRect(x,y,boxW,boxH);ctx.fillStyle='#000';ctx.fillRect(x+pad,y+pad+Math.round((font-barH)/2),barW,barH);ctx.font='600 '+font+'px Arial, sans-serif';ctx.textBaseline='top';ctx.fillText(lines.top,x+pad+barW+Math.round(8*scale),y+pad);if(lines.bottom){ctx.font='500 '+small+'px Arial, sans-serif';ctx.fillStyle='#555';ctx.fillText(lines.bottom,x+pad,y+pad+font+Math.round(5*scale));}ctx.restore();return canvas;}
-async function applyPdfWatermark(doc,reversible){if(!CFG.watermarkEnabled)return doc;var P=window.PDFLib,regular=await doc.embedFont(P.StandardFonts.Helvetica),bold=await doc.embedFont(P.StandardFonts.HelveticaBold),lines=brandLines(reversible);doc.getPages().forEach(function(page){var size=page.getSize(),s=Math.max(.7,Math.min(1.15,Math.min(size.width,size.height)/612)),font=8*s,small=6.5*s,pad=5*s,barW=14*s,barH=4*s,topW=bold.widthOfTextAtSize(lines.top,font),bottomW=lines.bottom?regular.widthOfTextAtSize(lines.bottom,small):0,boxW=Math.max(barW+5*s+topW,bottomW)+pad*2,boxH=(lines.bottom?font+small+6*s:font+3*s)+pad*2,x=size.width-boxW-8*s,y=8*s;page.drawRectangle({x:x,y:y,width:boxW,height:boxH,color:P.rgb(1,1,1),opacity:.90});page.drawRectangle({x:x+pad,y:y+boxH-pad-font/2-barH/2,width:barW,height:barH,color:P.rgb(0,0,0)});page.drawText(lines.top,{x:x+pad+barW+5*s,y:y+boxH-pad-font,size:font,font:bold,color:P.rgb(0,0,0)});if(lines.bottom)page.drawText(lines.bottom,{x:x+pad,y:y+pad,size:small,font:regular,color:P.rgb(.28,.28,.28)});
-    if(lines.url)linkRegion(doc,page,x,y,boxW,boxH,lines.url);});return doc;}
-/* A Link annotation with a URI action, sized to the mark. Border width 0 so it
-   is invisible; the mark itself is the visible affordance. */
-function linkRegion(doc,page,x,y,w,h,url){var P=window.PDFLib;
+
+function trackedWidth(font,text,size){
+  return font.widthOfTextAtSize(text,size)+TRACK*size*Math.max(0,text.length-1);
+}
+
+/* Geometry shared by the drawing and the link rectangle. */
+function markLayout(size,bold,regular,reversible){
+  var lines=brandLines(reversible);
+  var s=Math.max(.7,Math.min(1.15,Math.min(size.width,size.height)/612));
+  var f1=8*s,f2=5.4*s,f3=6.2*s;
+  var pad=6*s,barW=15*s,barH=3.2*s,gap=5*s,lineGap=5.5*s;
+  var chipPadX=3.4*s,chipPadY=2.2*s;
+  var chipTextW=lines.chip?trackedWidth(bold,lines.chip,f2):0;
+  var chipW=lines.chip?chipTextW+chipPadX*2:0;
+  var chipH=lines.chip?f2*CAP+chipPadY*2:0;
+  var urlW=lines.bottom?regular.widthOfTextAtSize(lines.bottom,f3):0;
+  var row1W=barW+gap+bold.widthOfTextAtSize(lines.top,f1);
+  var row2W=(lines.chip?chipW+gap:0)+urlW;
+  var rowH=Math.max(chipH,f3*CAP);
+  var boxW=Math.max(row1W,row2W)+pad*2;
+  var boxH=pad*2+f1*CAP+lineGap+rowH;
+  return{lines:lines,s:s,f1:f1,f2:f2,f3:f3,pad:pad,barW:barW,barH:barH,gap:gap,
+    chipW:chipW,chipH:chipH,chipPadX:chipPadX,rowH:rowH,
+    boxW:boxW,boxH:boxH,x:size.width-boxW-8*s,y:8*s};
+}
+
+function pdfStr(t){return '('+String(t).replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)')+')';}
+function n(v){return (Math.round(v*1000)/1000).toString();}
+
+/* The mark as PDF operators, drawn into a stream of its own. */
+function markOperators(L,fBold,fReg){
+  var o=[],x=L.x,y=L.y,W=L.boxW,H=L.boxH;
+  o.push('q');
+  o.push('1 1 1 rg '+n(x)+' '+n(y)+' '+n(W)+' '+n(H)+' re f');          // ground
+
+  // row 1 — bar and wordmark, the bar centred on the cap height of the text
+  var base1=y+H-L.pad-L.f1*CAP;
+  var barY=base1+L.f1*CAP/2-L.barH/2;
+  o.push('0 0 0 rg '+n(x+L.pad)+' '+n(barY)+' '+n(L.barW)+' '+n(L.barH)+' re f');
+  o.push('BT /'+fBold+' '+n(L.f1)+' Tf 1 0 0 1 '+n(x+L.pad+L.barW+L.gap)+' '+n(base1)+' Tm '+pdfStr(L.lines.top)+' Tj ET');
+
+  // row 2 — the reversible chip, then the address
+  var rowY=y+L.pad,cx=x+L.pad;
+  if(L.lines.chip){
+    var chipY=rowY+(L.rowH-L.chipH)/2;
+    o.push('0 0 0 RG '+n(.6*L.s)+' w '+n(cx)+' '+n(chipY)+' '+n(L.chipW)+' '+n(L.chipH)+' re S');
+    var ctBase=chipY+(L.chipH-L.f2*CAP)/2;
+    o.push('BT /'+fBold+' '+n(L.f2)+' Tf '+n(TRACK*L.f2)+' Tc 1 0 0 1 '+n(cx+L.chipPadX)+' '+n(ctBase)+' Tm '+pdfStr(L.lines.chip)+' Tj 0 Tc ET');
+    cx+=L.chipW+L.gap;
+  }
+  if(L.lines.bottom){
+    var uBase=rowY+(L.rowH-L.f3*CAP)/2;
+    o.push('.35 .35 .35 rg BT /'+fReg+' '+n(L.f3)+' Tf 1 0 0 1 '+n(cx)+' '+n(uBase)+' Tm '+pdfStr(L.lines.bottom)+' Tj ET');
+  }
+  o.push('Q');
+  return o.join('\n');
+}
+
+function contentsArray(doc,page){
+  var P=window.PDFLib,k=P.PDFName.of('Contents'),c=page.node.get(k);
+  if(c&&typeof c.asArray==='function')return c;
+  var arr=doc.context.obj(c?[c]:[]);
+  page.node.set(k,arr);
+  return page.node.get(k);
+}
+
+/* Delete the mark stream, its page reference and the link that went with it. */
+function removePdfMark(doc){
+  var P=window.PDFLib,key=P.PDFName.of(MARK_KEY),base=siteBase();
+  doc.getPages().forEach(function(page){
+    var ref=page.node.get(key);
+    if(ref){
+      var c=contentsArray(doc,page);
+      var kept=c.asArray().filter(function(r){return !(r&&ref&&r.tag===ref.tag);});
+      page.node.set(P.PDFName.of('Contents'),doc.context.obj(kept));
+      page.node.delete(key);
+      try{doc.context.delete(ref);}catch(e){}
+    }
+    var an=page.node.get(P.PDFName.of('Annots'));
+    if(an&&typeof an.asArray==='function'){
+      var keepA=an.asArray().filter(function(r){
+        try{
+          var a=doc.context.lookup(r),act=a&&a.get&&a.get(P.PDFName.of('A'));
+          var uri=act&&act.get&&act.get(P.PDFName.of('URI'));
+          var v=uri&&uri.asString?uri.asString():'';
+          return !(base&&v.indexOf(base)===0);
+        }catch(e){return true;}
+      });
+      page.node.set(P.PDFName.of('Annots'),doc.context.obj(keepA));
+    }
+  });
+  return doc;
+}
+
+async function applyPdfWatermark(doc,reversible){
+  if(!CFG.watermarkEnabled)return doc;
+  var P=window.PDFLib,te=new TextEncoder();
+  var bold=await doc.embedFont(P.StandardFonts.HelveticaBold);
+  var regular=await doc.embedFont(P.StandardFonts.Helvetica);
+  removePdfMark(doc);                       // never stack two marks
+  doc.getPages().forEach(function(page){
+    var L=markLayout(page.getSize(),bold,regular,reversible);
+    var nb=String(page.node.newFontDictionary('BOMarkB',bold.ref)).replace('/','');
+    var nr=String(page.node.newFontDictionary('BOMarkR',regular.ref)).replace('/','');
+    var ref=doc.context.register(doc.context.stream(te.encode(markOperators(L,nb,nr))));
+    contentsArray(doc,page).push(ref);
+    page.node.set(P.PDFName.of(MARK_KEY),ref);
+    if(L.lines.url)linkRegion(doc,page,L.x,L.y,L.boxW,L.boxH,L.lines.url);
+  });
+  return doc;
+}
+
+/* A Link annotation with a URI action, sized to the mark. Border width 0 so
+   the mark itself is the only visible affordance. */
+function linkRegion(doc,page,x,y,w,h,url){
+  var P=window.PDFLib;
   var annot=doc.context.obj({Type:P.PDFName.of('Annot'),Subtype:P.PDFName.of('Link'),
     Rect:doc.context.obj([x,y,x+w,y+h]),Border:doc.context.obj([0,0,0]),
     F:4,A:doc.context.obj({Type:P.PDFName.of('Action'),S:P.PDFName.of('URI'),URI:P.PDFString.of(url)})});
   var ref=doc.context.register(annot),key=P.PDFName.of('Annots'),existing=page.node.get(key);
   if(existing&&typeof existing.push==='function')existing.push(ref);
-  else page.node.set(key,doc.context.obj([ref]));}
+  else page.node.set(key,doc.context.obj([ref]));
+}
+
+/* Same mark on a flattened image. No link is possible in a PNG, so the
+   address is the way back. Layout is split out so the region can be cleared
+   and restamped when a reversible image is made permanent. */
+function canvasLayout(ctx,w,h,reversible){
+  var lines=brandLines(reversible);
+  var s=Math.max(.75,Math.min(2.4,Math.min(w,h)/760));
+  var f1=Math.round(15*s),f2=Math.round(10*s),f3=Math.round(11.5*s);
+  var pad=Math.round(11*s),barW=Math.round(27*s),barH=Math.max(3,Math.round(6*s));
+  var gap=Math.round(9*s),lineGap=Math.round(9*s);
+  var chipPadX=Math.round(6*s),chipPadY=Math.round(4*s);
+  var B='700 '+f1+'px Arial, Helvetica, sans-serif';
+  var C='700 '+f2+'px Arial, Helvetica, sans-serif';
+  var U='400 '+f3+'px Arial, Helvetica, sans-serif';
+  var track=TRACK*f2;
+  ctx.save();ctx.textBaseline='alphabetic';
+  ctx.font=B; var topW=ctx.measureText(lines.top).width;
+  ctx.font=C; var chipTextW=lines.chip?ctx.measureText(lines.chip).width+track*Math.max(0,lines.chip.length-1):0;
+  ctx.font=U; var urlW=lines.bottom?ctx.measureText(lines.bottom).width:0;
+  ctx.restore();
+  var chipW=lines.chip?Math.round(chipTextW+chipPadX*2):0;
+  var chipH=lines.chip?Math.round(f2*CAP+chipPadY*2):0;
+  var rowH=Math.max(chipH,Math.round(f3*CAP));
+  var boxW=Math.ceil(Math.max(barW+gap+topW,(lines.chip?chipW+gap:0)+urlW)+pad*2);
+  var boxH=Math.ceil(pad*2+f1*CAP+lineGap+rowH);
+  return{lines:lines,s:s,f1:f1,f2:f2,f3:f3,pad:pad,barW:barW,barH:barH,gap:gap,lineGap:lineGap,
+    chipW:chipW,chipH:chipH,chipPadX:chipPadX,chipPadY:chipPadY,rowH:rowH,track:track,B:B,C:C,U:U,
+    boxW:boxW,boxH:boxH,x:w-boxW-Math.round(10*s),y:h-boxH-Math.round(10*s)};
+}
+
+function applyCanvasWatermark(canvas,reversible){
+  if(!CFG.watermarkEnabled)return canvas;
+  var ctx=canvas.getContext('2d');
+  var L=canvasLayout(ctx,canvas.width,canvas.height,reversible);
+  ctx.save();
+  ctx.textBaseline='alphabetic';
+  ctx.fillStyle='#fff';ctx.fillRect(L.x,L.y,L.boxW,L.boxH);
+
+  // row 1 — bar centred on the cap height of the wordmark
+  var base1=L.y+L.pad+L.f1*CAP;
+  ctx.fillStyle='#000';
+  ctx.fillRect(L.x+L.pad,Math.round(base1-L.f1*CAP/2-L.barH/2),L.barW,L.barH);
+  ctx.font=L.B;ctx.fillText(L.lines.top,L.x+L.pad+L.barW+L.gap,base1);
+
+  // row 2 — chip then address
+  var rowTop=L.y+L.pad+L.f1*CAP+L.lineGap,cx=L.x+L.pad;
+  if(L.lines.chip){
+    var chipY=rowTop+(L.rowH-L.chipH)/2;
+    ctx.strokeStyle='#000';ctx.lineWidth=Math.max(1,Math.round(1.1*L.s));
+    ctx.strokeRect(cx+.5,Math.round(chipY)+.5,L.chipW,L.chipH);
+    ctx.font=L.C;ctx.fillStyle='#000';
+    var tx=cx+L.chipPadX,tb=chipY+(L.chipH+L.f2*CAP)/2;
+    for(var i=0;i<L.lines.chip.length;i++){
+      ctx.fillText(L.lines.chip[i],tx,tb);
+      tx+=ctx.measureText(L.lines.chip[i]).width+L.track;
+    }
+    cx+=L.chipW+L.gap;
+  }
+  if(L.lines.bottom){
+    ctx.font=L.U;ctx.fillStyle='#595959';
+    ctx.fillText(L.lines.bottom,cx,rowTop+(L.rowH+L.f3*CAP)/2);
+  }
+  ctx.restore();
+  return canvas;
+}
+
+/* An image mark lives in the pixels, so making one permanent means painting
+   the region again. That is a genuine replacement, not a cover-up: a flattened
+   PNG has no layer underneath, so overwriting those pixels destroys what was
+   there. The same move on a PDF would only hide text, which is why the PDF
+   path removes its mark stream instead. */
+function restampCanvasWatermark(canvas){
+  if(!CFG.watermarkEnabled)return canvas;
+  var ctx=canvas.getContext('2d');
+  var was=canvasLayout(ctx,canvas.width,canvas.height,true);
+  var now=canvasLayout(ctx,canvas.width,canvas.height,false);
+  var x=Math.min(was.x,now.x),y=Math.min(was.y,now.y);
+  var w=Math.max(was.x+was.boxW,now.x+now.boxW)-x;
+  var h=Math.max(was.y+was.boxH,now.y+now.boxH)-y;
+  ctx.save();ctx.fillStyle='#fff';ctx.fillRect(x,y,w,h);ctx.restore();
+  return applyCanvasWatermark(canvas,false);
+}
+
+/* Remove the recovery chunk and restamp, so a permanent image never carries a
+   mark that still claims to be reversible. */
+async function makeImagePermanent(blobOrBytes){
+  var stripped=await stripPngRecovery(blobOrBytes);
+  var url=URL.createObjectURL(stripped);
+  try{
+    var img=await new Promise(function(res,rej){
+      var i=new Image();i.onload=function(){res(i);};i.onerror=rej;i.src=url;
+    });
+    var c=document.createElement('canvas');
+    c.width=img.naturalWidth;c.height=img.naturalHeight;
+    c.getContext('2d').drawImage(img,0,0);
+    restampCanvasWatermark(c);
+    return await new Promise(function(res,rej){
+      c.toBlob(function(b){b?res(b):rej(new Error('image export failed'));},'image/png');
+    });
+  }finally{URL.revokeObjectURL(url);}
+}
+
 // Local-only handoff between redaction and metadata pages.
 function db(){return new Promise(function(resolve,reject){var r=indexedDB.open('blackout-local',1);r.onupgradeneeded=function(){if(!r.result.objectStoreNames.contains('handoff'))r.result.createObjectStore('handoff');};r.onsuccess=function(){resolve(r.result);};r.onerror=function(){reject(r.error);};});}
 async function putHandoff(item,slot){var d=await db();return new Promise(function(resolve,reject){var tx=d.transaction('handoff','readwrite');tx.objectStore('handoff').put(item,slot||'current');tx.oncomplete=function(){d.close();resolve();};tx.onerror=function(){d.close();reject(tx.error);};});}
 async function getHandoff(slot){var d=await db();return new Promise(function(resolve,reject){var tx=d.transaction('handoff','readonly'),r=tx.objectStore('handoff').get(slot||'current');r.onsuccess=function(){var v=r.result||null;tx.oncomplete=function(){d.close();resolve(v);};};r.onerror=function(){d.close();reject(r.error);};});}
 async function clearHandoff(slot){var d=await db();return new Promise(function(resolve,reject){var tx=d.transaction('handoff','readwrite');tx.objectStore('handoff').delete(slot||'current');tx.oncomplete=function(){d.close();resolve();};tx.onerror=function(){d.close();reject(tx.error);};});}
-window.BlackoutCore={slots:true,config:CFG,generateRecoveryKey:generateRecoveryKey,isGeneratedKey:isGeneratedKey,encryptRecovery:encryptRecovery,decryptRecovery:decryptRecovery,putPngRecovery:putPngRecovery,extractPngRecovery:extractPngRecovery,attachPdfRecovery:attachPdfRecovery,extractPdfRecovery:extractPdfRecovery,applyCanvasWatermark:applyCanvasWatermark,applyPdfWatermark:applyPdfWatermark,stripPngRecovery:stripPngRecovery,stripPdfRecovery:stripPdfRecovery,hasRecoveryBytes:hasRecoveryBytes,putHandoff:putHandoff,getHandoff:getHandoff,clearHandoff:clearHandoff};
+window.BlackoutCore={slots:true,config:CFG,generateRecoveryKey:generateRecoveryKey,isGeneratedKey:isGeneratedKey,encryptRecovery:encryptRecovery,decryptRecovery:decryptRecovery,putPngRecovery:putPngRecovery,extractPngRecovery:extractPngRecovery,attachPdfRecovery:attachPdfRecovery,extractPdfRecovery:extractPdfRecovery,applyCanvasWatermark:applyCanvasWatermark,makeImagePermanent:makeImagePermanent,removePdfMark:removePdfMark,applyPdfWatermark:applyPdfWatermark,stripPngRecovery:stripPngRecovery,stripPdfRecovery:stripPdfRecovery,hasRecoveryBytes:hasRecoveryBytes,putHandoff:putHandoff,getHandoff:getHandoff,clearHandoff:clearHandoff};
 })();

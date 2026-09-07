@@ -36,3 +36,10 @@
   .facts .k{flex:0 0 100%;max-width:none}
   .facts div{flex-direction:column;gap:3px}
 }
+
+.arrived{
+  border:2px solid var(--ink);padding:14px 16px;margin:0 0 14px;
+  display:flex;flex-direction:column;gap:4px;max-width:var(--measure);
+}
+.arrived strong{font-size:17px;font-weight:600;letter-spacing:-.01em}
+.arrived span{font-size:14px;color:var(--g70);line-height:1.5}

@@ -60,13 +60,24 @@ the save is abandoned if any is found — the check reads the file, not the
 reference, because following the reference is what produced the false pass.
 
 ## Visible mark
-The mark drawn on an exported file reads the same whether or not the file is
-reversible; only the link annotation behind it differs, pointing at the unlock
-page for a reversible file and the app for a permanent one. Keeping the drawn
-text identical means making a file permanent only has to rewrite an annotation.
-Nothing is ever painted over: covering text with a box instead of removing it
-is the failure this whole tool exists to prevent, and that applies to our own
-branding as much as to a user's secrets.
+A reversible file is marked as one — a `REVERSIBLE` chip and the unlock address
+sit under the wordmark, and the mark carries a link annotation to the unlock
+page. A permanent file shows the wordmark and the site address, linking to the
+app.
+
+Because the two variants say different things, making a file permanent has to
+remove the old mark rather than cover it. In a PDF the mark is drawn into a
+content stream of its own, referenced from the page under a private key, and
+that stream is deleted outright when the file is made permanent — the old text
+leaves the file rather than hiding under a white rectangle. Covering text with
+a box instead of removing it is the failure this whole tool exists to prevent,
+and that applies to our own branding as much as to a user's secrets.
+
+An image mark is different in kind: it lives in the pixels of a flattened
+raster, with no layer beneath it, so repainting that region genuinely destroys
+what was there. Making a reversible image permanent therefore strips the chunk
+and repaints the mark. The same move on a PDF would only hide text, which is
+why the two paths differ.
 
 ## Storage of the key
 The key is never written to disk by any page. The editor keeps an edit session
