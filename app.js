@@ -21,7 +21,32 @@ function renderPDFBytes(bytes){return pdfjsLib.getDocument({data:bytes}).promise
    Every box built from text geometry drops this much of an em past the bottom
    so the tails are covered too. Over-covering is the safe direction here. */
 var DESCENDER=.3;
-function makeTextItems(tc,vp){return (tc.items||[]).filter(function(it){return it.str&&it.str.trim();}).map(function(it){var tx=pdfjsLib.Util.transform(vp.transform,it.transform),h=Math.max(2,Math.hypot(tx[2],tx[3])||Math.abs(tx[3])||10),w=Math.max(1,(it.width||0)*vp.scale);return{str:it.str,x:tx[4],y:tx[5]-h,w:w,h:h};});}
+/* A run does not always read left to right on screen. Text carries its own
+   matrix and a rotated page turns everything on it, so a line can come out
+   sideways or upside down. The box has to be the one the glyphs really
+   occupy — a horizontal guess would sit somewhere the words are not, and a
+   mark drawn there looks like a redaction without being one. Each run is
+   therefore measured along its own direction and reported as the upright box
+   that contains it. A run that already reads left to right comes out exactly
+   as it did before. */
+function makeTextItems(tc,vp){return (tc.items||[]).filter(function(it){return it.str&&it.str.trim();}).map(function(it){
+  var tx=pdfjsLib.Util.transform(vp.transform,it.transform);
+  var h=Math.max(2,Math.hypot(tx[2],tx[3])||Math.abs(tx[3])||10);
+  var w=Math.max(1,(it.width||0)*vp.scale);
+  var su=Math.hypot(tx[0],tx[1])||1,ux=tx[0]/su,uy=tx[1]/su;
+  var upright=Math.abs(uy)<1e-6&&ux>0;
+  if(upright)return{str:it.str,x:tx[4],y:tx[5]-h,w:w,h:h,turned:false,len:w,em:h,ox:tx[4],oy:tx[5],angle:0};
+  // across the run, towards the top of the glyphs (screen y grows downward)
+  var vx=uy,vy=-ux,xs=[],ys=[];
+  [[0,0],[w,0],[0,h],[w,h]].forEach(function(p){
+    xs.push(tx[4]+ux*p[0]+vx*p[1]);ys.push(tx[5]+uy*p[0]+vy*p[1]);
+  });
+  var x1=Math.min.apply(null,xs),y1=Math.min.apply(null,ys);
+  return{str:it.str,x:x1,y:y1,
+    w:Math.max(1,Math.max.apply(null,xs)-x1),
+    h:Math.max(2,Math.max.apply(null,ys)-y1),
+    turned:true,len:w,em:h,ox:tx[4],oy:tx[5],angle:Math.atan2(uy,ux)};
+});}
 function openImage(file){file.arrayBuffer().then(async function(buf){var bytes=new Uint8Array(buf);reversiblePayload=await BlackoutCore.extractPngRecovery(bytes);var blob=new Blob([buf],{type:file.type||'image/png'}),url=URL.createObjectURL(blob),img=new Image();img.onload=function(){var c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext('2d').drawImage(img,0,0);URL.revokeObjectURL(url);addPage(c,img.naturalWidth,img.naturalHeight,1,1,[],img.naturalWidth,img.naturalHeight);if(reversiblePayload){$('restorePanel').style.display='block';$('restorePanel').querySelector('strong').textContent='This is a reversible Blackout file.';$('restoreText').textContent='Enter its recovery key to reveal the exact original file.';}ready(reversiblePayload?'Reversible recovery data detected.':'');};img.onerror=function(){URL.revokeObjectURL(url);say('That image could not be opened.');};img.src=url;}).catch(function(){say('That image could not be read.');});}
 function addPage(base,wPt,hPt,num,total,textItems,intrinsicW,intrinsicH){var holder=document.createElement('div');holder.className='page';if(total>1){var lbl=document.createElement('div');lbl.className='pagenum';lbl.textContent='Page '+num+' of '+total;holder.appendChild(lbl);}var wrap=document.createElement('div');wrap.className='canvaswrap';var disp=document.createElement('canvas');disp.width=base.width;disp.height=base.height;disp.getContext('2d').drawImage(base,0,0);wrap.appendChild(disp);var textLayer=document.createElement('div');textLayer.className='textlayer';var textInner=document.createElement('div');textInner.className='textinner';textLayer.appendChild(textInner);wrap.appendChild(textLayer);var layer=document.createElement('div');layer.className='layer';var marquee=document.createElement('div');marquee.className='marquee';layer.appendChild(marquee);wrap.appendChild(layer);holder.appendChild(wrap);pagesEl.appendChild(holder);var p={base:base,redactedBase:null,unlockedBase:null,disp:disp,wrap:wrap,layer:layer,textLayer:textLayer,textInner:textInner,rects:[],wPt:wPt,hPt:hPt,textItems:textItems||[],intrinsicW:intrinsicW||base.width,intrinsicH:intrinsicH||base.height};pages.push(p);buildTextLayer(p);buildSearchIndex(p);wireDrawing(p,marquee);wireTextSelect(p);watchPageWidth(p);}
 function redraw(p,canvas){p.disp.width=canvas.width;p.disp.height=canvas.height;p.disp.getContext('2d').drawImage(canvas,0,0);}
@@ -39,11 +64,14 @@ function buildTextLayer(p){
   p.textItems.forEach(function(it){
     var s=document.createElement('span');
     s.textContent=it.str;
-    s.style.left=it.x+'px';
-    s.style.top=it.y+'px';
-    s.style.fontSize=Math.max(2,it.h)+'px';
+    /* A run that is not upright is drawn along its own direction, so that
+       selecting over it highlights the glyphs and not a horizontal strip of
+       empty page beside them. */
+    s.style.left=(it.turned?it.ox:it.x)+'px';
+    s.style.top=(it.turned?it.oy:it.y)+'px';
+    s.style.fontSize=Math.max(2,it.em||it.h)+'px';
     p.textInner.appendChild(s);
-    p.textRuns.push({el:s,want:Math.max(1,it.w)});
+    p.textRuns.push({el:s,want:Math.max(1,it.len||it.w),angle:it.turned?it.angle:0});
   });
 }
 
@@ -55,9 +83,15 @@ function fitTextRuns(p){
   if(!p.wrap.clientWidth)return;
   p.textInner.style.transform='none';
   p.textRuns.forEach(function(r){
+    r.el.style.transform='none';
     var rg=document.createRange();rg.selectNodeContents(r.el);
-    var got=rg.getBoundingClientRect().width;
-    if(got>0)r.el.style.transform='scaleX('+(r.want/got)+')';
+    var got=rg.getBoundingClientRect().width;   // measured upright, then turned
+    /* A turned run is anchored at its baseline-left corner, so it is rotated
+       about that point and then lifted by its own height — the same place an
+       upright run sits, expressed in the run's own direction. */
+    var turn=r.angle?'rotate('+r.angle+'rad) translateY(-100%) ':'';
+    if(got>0)r.el.style.transform=turn+'scaleX('+(r.want/got)+')';
+    else if(turn)r.el.style.transform=turn;
   });
   p.fitted=true;
   syncTextScale(p);
@@ -339,7 +373,7 @@ function useFlattening(why){
   say(why+' Switched to flattening — press Continue again to use it.');
 }
 
-/* Removing the text is the method that can fail without looking like it has:
+/* Removing the content is the method that can fail without looking like it has:
    the mark is drawn either way, so a file that kept a word looks exactly like
    one that did not. Nothing it produces is offered until it has been read back
    and shown to be clean. If it cannot be, the file is not saved at all. */

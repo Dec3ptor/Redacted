@@ -109,20 +109,51 @@ into those pixels, and a new file is built from the results. No text object
 survives anywhere, so there is nothing to recover under a mark or outside one.
 Blunt, and hard to get wrong.
 
-**Remove the text.** The glyphs under each mark are deleted from the page
-content stream and everything else is left untouched, so the output stays real
-searchable text everywhere that was not redacted. This is the method
-professional tools use, and the one that fails without looking like it has: the
-mark is drawn either way, so a file that kept a word is indistinguishable from
-one that did not.
+**Remove the content.** Whatever sits under a mark is destroyed at source and
+everything else is left untouched, so the output stays real searchable text and
+real images everywhere that was not redacted. This is the method professional
+tools use, and the one that fails without looking like it has: the mark is
+drawn either way, so a file that kept a word is indistinguishable from one that
+did not.
 
-Because of that, nothing this method produces is offered until it has been
-read back and proved. The output is re-parsed and every surviving character is
-placed; if any non-space character still sits inside a mark, the file is not
-saved and the reason is shown. The editor also declines outright rather than
-guess when a page holds something it cannot reason about — an image or form
-drawn under a mark, an inline image, a rotated page, a text operator it does
-not rewrite, or a text encoding it cannot cut safely.
+Nothing is refused and no page is quietly flattened when the method meets
+something awkward, because those are the same act — giving the problem back to
+the person who asked for a redaction. Each kind of content under a mark is
+handled on its own terms:
+
+- **Text** — the glyphs are cut out of the show operator (`Tj`, `TJ`, `'`, `"`,
+  literal or hex) and the text that follows is pulled back so the line does not
+  shift.
+- **Images** — the image is decoded through the PDF reader, whatever its
+  original format, the covered pixels are destroyed in the decoded bitmap, and
+  the result is re-embedded as a fresh object. The mark is mapped into pixel
+  space by inverting the image's own placement matrix, so only the covered part
+  of the picture is lost. The original object is then deleted along with its
+  now-dead resource entry, so the un-redacted bytes are not left orphaned in
+  the file — the same failure `stripPdfRecovery` had to be fixed for.
+- **Form XObjects** — walked into and edited by the same rules, under the
+  matrix composed from the outside in, so nested content is handled at whatever
+  depth it appears.
+- **Inline images** (`BI`/`ID`/`EI`) — replaced by a redacted image object
+  drawn in their place.
+
+Nothing this method produces is offered until it has been read back and proved.
+The output is re-parsed and every surviving character is placed; if any
+non-space character still sits inside a mark, the file is not saved and the
+reason is shown. The remaining refusals are all of the form "this file could not
+be read or written at all", never "this content is inconvenient".
+
+Two things a page can do that a simpler reading would get wrong are handled
+explicitly, because both fail the same dangerous way. A page can carry
+`/Rotate`, and text can carry its own matrix, so a line may be set sideways or
+upside down. Marks arrive as fractions of the page *as displayed*; content
+lives in the page's own space and runs along their own direction. Both the edit
+and the proof map between those spaces through one shared piece of code, for a
+specific reason: if each did its own arithmetic and both were wrong the same
+way, the proof would agree with the mistake and pass a file that still held the
+words. The editor's own boxes — search, smart scan and text selection — are
+built along the run direction for the same reason, so a mark is never drawn
+beside the glyphs it claims to cover.
 
 One approximation is worth stating. A run's total width is known exactly, but
 the widths of the individual glyphs inside it are not, so character positions
