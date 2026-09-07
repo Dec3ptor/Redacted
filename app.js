@@ -8,12 +8,12 @@ var drop=$('drop'),fileInput=$('file'),editor=$('editor'),pagesEl=$('pages'),sta
 function say(m){statusEl.textContent=m||'';}
 function escRegExp(s){return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}
 function setMode(m){mode=m;document.body.dataset.mode=m;['Box','Text','Move'].forEach(function(n){$('mode'+n).setAttribute('aria-pressed',m===n.toLowerCase());});
- hint.textContent=m==='box'?'Drag a box over anything you want hidden.':m==='text'?'Drag across PDF text as if you were highlighting it. Blackout turns each selected line into a fitted redaction box.':'Scroll normally. Tap a box to select it, then drag, resize, or delete it.';if(m!=='move')deselect();updateTextScales();}
+ hint.textContent=m==='box'?'Drag a box over anything you want hidden.':m==='text'?'Select PDF text the way you would anywhere else, then press Black out. On a phone, long-press a word and drag the handles first. Nothing is covered until you confirm.':'Scroll normally. Tap a box to select it, then drag, resize, or delete it.';if(m!=='move')deselect();if(m!=='text')clearTextSelection();updateTextScales();}
 $('modeBox').onclick=function(){setMode('box');};$('modeText').onclick=function(){if(!sourceIsPDF){say('Text selection is available for PDFs. Use Draw box for images.');return;}setMode('text');};$('modeMove').onclick=function(){setMode('move');};
-function intake(file){if(!file)return;resetAll();$('resumebar').hidden=true;sourceFile=file;baseName=(file.name||'document').replace(/\.[^.]+$/,'')||'document';$('fname').textContent=file.name;sourceIsPDF=file.type==='application/pdf'||/\.pdf$/i.test(file.name);$('saveMode').style.display='flex';if(sourceIsPDF){$('searchbar').style.display='flex';say('Opening PDF…');openPDF(file);}else if((file.type||'').indexOf('image/')===0||/\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name)){$('searchbar').style.display='none';say('Opening image…');openImage(file);}else say('Use a PDF or image file.');}
+function intake(file){if(!file)return;resetAll();clearTextSelection();$('resumebar').hidden=true;sourceFile=file;baseName=(file.name||'document').replace(/\.[^.]+$/,'')||'document';$('fname').textContent=file.name;sourceIsPDF=file.type==='application/pdf'||/\.pdf$/i.test(file.name);$('saveMode').style.display='flex';if(sourceIsPDF){$('searchbar').style.display='flex';say('Opening PDF…');openPDF(file);}else if((file.type||'').indexOf('image/')===0||/\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name)){$('searchbar').style.display='none';say('Opening image…');openImage(file);}else say('Use a PDF or image file.');}
 drop.onclick=function(){fileInput.click();};drop.onkeydown=function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();fileInput.click();}};['dragenter','dragover'].forEach(function(ev){drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.add('hot');});});['dragleave','drop'].forEach(function(ev){drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.remove('hot');});});drop.addEventListener('drop',function(e){if(e.dataTransfer.files.length)intake(e.dataTransfer.files[0]);});fileInput.onchange=function(){if(this.files.length)intake(this.files[0]);};$('newBtn').onclick=function(){fileInput.value='';resetAll();dropSession();};
 function resetAll(){pages=[];history=[];selected=null;sourceFile=null;reversiblePayload=null;unlockedOriginal=null;revealed=false;pagesEl.innerHTML='';editor.style.display='none';drop.style.display='block';document.body.classList.remove('editing');undoBtn.disabled=delBtn.disabled=saveBtn.disabled=true;$('restorePanel').style.display='none';$('securebar').hidden=true;$('keyInput').value='';$('unlockKey').value='';$('unlockBtn').hidden=false;$('toggleRevealBtn').hidden=true;$('saveOriginalBtn').hidden=true;say('');}
-function ready(msg){editor.style.display='block';drop.style.display='none';document.body.classList.add('editing');saveBtn.disabled=false;setMode('box');var restored=applyRestore();say(restored||msg||'');setTimeout(updateTextScales,0);}
+function ready(msg){editor.style.display='block';drop.style.display='none';document.body.classList.add('editing');saveBtn.disabled=false;setMode('box');var restored=applyRestore();say(restored||msg||'');setTimeout(function(){pages.forEach(fitTextRuns);updateTextScales();},0);}
 function openPDF(file){if(!pdfjsLib){say('The PDF reader did not load. Reload while connected to the internet.');return;}file.arrayBuffer().then(async function(buf){var bytes=new Uint8Array(buf);reversiblePayload=await BlackoutCore.extractPdfRecovery(bytes);if(reversiblePayload){$('restorePanel').style.display='block';$('restorePanel').querySelector('strong').textContent='This is a reversible Blackout file.';$('restoreText').textContent='Enter its recovery key to reveal the exact original PDF.';}return renderPDFBytes(bytes);}).catch(function(err){console.error(err);say('That PDF could not be opened. It may be password protected or damaged.');});}
 function renderPDFBytes(bytes){return pdfjsLib.getDocument({data:bytes}).promise.then(function(pdf){var count=Math.min(pdf.numPages,MAX_PAGES),chain=Promise.resolve();for(var i=1;i<=count;i++)(function(n){chain=chain.then(function(){say('Rendering page '+n+' of '+count+'…');return pdf.getPage(n).then(function(pg){var vp=pg.getViewport({scale:2}),c=document.createElement('canvas');c.width=Math.floor(vp.width);c.height=Math.floor(vp.height);var ctx=c.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,c.width,c.height);return Promise.all([pg.render({canvasContext:ctx,viewport:vp}).promise,pg.getTextContent()]).then(function(res){addPage(c,vp.width/2,vp.height/2,n,count,makeTextItems(res[1],vp),vp.width,vp.height);});});});})(i);return chain.then(function(){ready(pdf.numPages>MAX_PAGES?'Showing the first '+MAX_PAGES+' pages. Split longer PDFs first.':(reversiblePayload?'Reversible recovery data detected.':''));});});}
 /* A text item's box runs from one em above the baseline down to the baseline
@@ -23,11 +23,60 @@ function renderPDFBytes(bytes){return pdfjsLib.getDocument({data:bytes}).promise
 var DESCENDER=.3;
 function makeTextItems(tc,vp){return (tc.items||[]).filter(function(it){return it.str&&it.str.trim();}).map(function(it){var tx=pdfjsLib.Util.transform(vp.transform,it.transform),h=Math.max(2,Math.hypot(tx[2],tx[3])||Math.abs(tx[3])||10),w=Math.max(1,(it.width||0)*vp.scale);return{str:it.str,x:tx[4],y:tx[5]-h,w:w,h:h};});}
 function openImage(file){file.arrayBuffer().then(async function(buf){var bytes=new Uint8Array(buf);reversiblePayload=await BlackoutCore.extractPngRecovery(bytes);var blob=new Blob([buf],{type:file.type||'image/png'}),url=URL.createObjectURL(blob),img=new Image();img.onload=function(){var c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext('2d').drawImage(img,0,0);URL.revokeObjectURL(url);addPage(c,img.naturalWidth,img.naturalHeight,1,1,[],img.naturalWidth,img.naturalHeight);if(reversiblePayload){$('restorePanel').style.display='block';$('restorePanel').querySelector('strong').textContent='This is a reversible Blackout file.';$('restoreText').textContent='Enter its recovery key to reveal the exact original file.';}ready(reversiblePayload?'Reversible recovery data detected.':'');};img.onerror=function(){URL.revokeObjectURL(url);say('That image could not be opened.');};img.src=url;}).catch(function(){say('That image could not be read.');});}
-function addPage(base,wPt,hPt,num,total,textItems,intrinsicW,intrinsicH){var holder=document.createElement('div');holder.className='page';if(total>1){var lbl=document.createElement('div');lbl.className='pagenum';lbl.textContent='Page '+num+' of '+total;holder.appendChild(lbl);}var wrap=document.createElement('div');wrap.className='canvaswrap';var disp=document.createElement('canvas');disp.width=base.width;disp.height=base.height;disp.getContext('2d').drawImage(base,0,0);wrap.appendChild(disp);var textLayer=document.createElement('div');textLayer.className='textlayer';var textInner=document.createElement('div');textInner.className='textinner';textLayer.appendChild(textInner);wrap.appendChild(textLayer);var layer=document.createElement('div');layer.className='layer';var marquee=document.createElement('div');marquee.className='marquee';layer.appendChild(marquee);wrap.appendChild(layer);holder.appendChild(wrap);pagesEl.appendChild(holder);var p={base:base,redactedBase:null,unlockedBase:null,disp:disp,wrap:wrap,layer:layer,textLayer:textLayer,textInner:textInner,rects:[],wPt:wPt,hPt:hPt,textItems:textItems||[],intrinsicW:intrinsicW||base.width,intrinsicH:intrinsicH||base.height};pages.push(p);buildTextLayer(p);buildSearchIndex(p);wireDrawing(p,marquee);wireTextSelection(p);}
+function addPage(base,wPt,hPt,num,total,textItems,intrinsicW,intrinsicH){var holder=document.createElement('div');holder.className='page';if(total>1){var lbl=document.createElement('div');lbl.className='pagenum';lbl.textContent='Page '+num+' of '+total;holder.appendChild(lbl);}var wrap=document.createElement('div');wrap.className='canvaswrap';var disp=document.createElement('canvas');disp.width=base.width;disp.height=base.height;disp.getContext('2d').drawImage(base,0,0);wrap.appendChild(disp);var textLayer=document.createElement('div');textLayer.className='textlayer';var textInner=document.createElement('div');textInner.className='textinner';textLayer.appendChild(textInner);wrap.appendChild(textLayer);var layer=document.createElement('div');layer.className='layer';var marquee=document.createElement('div');marquee.className='marquee';layer.appendChild(marquee);wrap.appendChild(layer);holder.appendChild(wrap);pagesEl.appendChild(holder);var p={base:base,redactedBase:null,unlockedBase:null,disp:disp,wrap:wrap,layer:layer,textLayer:textLayer,textInner:textInner,rects:[],wPt:wPt,hPt:hPt,textItems:textItems||[],intrinsicW:intrinsicW||base.width,intrinsicH:intrinsicH||base.height};pages.push(p);buildTextLayer(p);buildSearchIndex(p);wireDrawing(p,marquee);watchPageWidth(p);}
 function redraw(p,canvas){p.disp.width=canvas.width;p.disp.height=canvas.height;p.disp.getContext('2d').drawImage(canvas,0,0);}
-function buildTextLayer(p){p.textInner.style.width=p.intrinsicW+'px';p.textInner.style.height=p.intrinsicH+'px';p.textItems.forEach(function(it){var s=document.createElement('span');s.textContent=it.str;s.style.left=it.x+'px';s.style.top=it.y+'px';s.style.width=Math.max(it.w,2)+'px';s.style.height=Math.max(it.h,2)+'px';s.style.fontSize=Math.max(it.h,2)+'px';p.textInner.appendChild(s);});}
-function updateTextScales(){pages.forEach(function(p){if(!p.wrap.clientWidth)return;var scale=p.wrap.clientWidth/p.intrinsicW;p.textInner.style.transform='scale('+scale+')';});}
+/* The invisible text has to sit exactly over the drawn glyphs, or selecting
+   picks up the wrong words. A run set in the fallback font is not the width the
+   PDF gives it — a Times document runs about 10% wide, which is most of a word
+   adrift by the end of a line — so each run is measured once and squeezed onto
+   its real width. Measuring happens with the layer's own scale off, so the
+   numbers are in page units. */
+function buildTextLayer(p){
+  p.textInner.style.transform='none';
+  p.textInner.style.width=p.intrinsicW+'px';
+  p.textInner.style.height=p.intrinsicH+'px';
+  p.textRuns=[];
+  p.textItems.forEach(function(it){
+    var s=document.createElement('span');
+    s.textContent=it.str;
+    s.style.left=it.x+'px';
+    s.style.top=it.y+'px';
+    s.style.fontSize=Math.max(2,it.h)+'px';
+    p.textInner.appendChild(s);
+    p.textRuns.push({el:s,want:Math.max(1,it.w)});
+  });
+}
+
+/* Measuring only works once the editor is on screen — pages are built while it
+   is still display:none, where every rect comes back zero. Run once, then the
+   ratios hold however the page is later scaled. */
+function fitTextRuns(p){
+  if(!p.textRuns||p.fitted)return;
+  if(!p.wrap.clientWidth)return;
+  p.textInner.style.transform='none';
+  p.textRuns.forEach(function(r){
+    var rg=document.createRange();rg.selectNodeContents(r.el);
+    var got=rg.getBoundingClientRect().width;
+    if(got>0)r.el.style.transform='scaleX('+(r.want/got)+')';
+  });
+  p.fitted=true;
+  syncTextScale(p);
+}
+function syncTextScale(p){
+  if(!p.textInner||!p.intrinsicW)return;
+  var w=p.wrap.clientWidth;
+  if(w)p.textInner.style.transform='scale('+(w/p.intrinsicW)+')';
+}
+function updateTextScales(){pages.forEach(function(p){fitTextRuns(p);syncTextScale(p);});}
 window.addEventListener('resize',updateTextScales);
+/* window resize is not the only thing that changes the canvas width — the
+   toolbar rewrapping, fonts arriving and a phone's address bar collapsing all
+   do, and a stale scale slides the invisible text off the page. */
+function watchPageWidth(p){
+  if(!window.ResizeObserver)return;
+  p.ro=new ResizeObserver(function(){syncTextScale(p);});
+  p.ro.observe(p.wrap);
+}
 function buildSearchIndex(p){var text='',ranges=[];p.textItems.forEach(function(it){if(text&&/\S$/.test(text)&&/^\S/.test(it.str))text+=' ';var start=text.length;text+=it.str;ranges.push({start:start,end:text.length,item:it});});p.searchText=text;p.searchRanges=ranges;}
 function snapshot(){history.push(pages.map(function(p){return p.rects.map(function(r){return{x:r.x,y:r.y,w:r.w,h:r.h};});}));if(history.length>80)history.shift();undoBtn.disabled=false;}
 undoBtn.onclick=function(){var snap=history.pop();if(!snap)return;deselect();pages.forEach(function(p,i){p.rects.forEach(function(r){r.el.remove();});p.rects=[];(snap[i]||[]).forEach(function(d){makeBox(p,d.x,d.y,d.w,d.h);});});undoBtn.disabled=!history.length;};
@@ -37,7 +86,155 @@ function select(r){deselect();selected=r;r.el.classList.add('sel');delBtn.disabl
 function removeBox(r){var i=r.page.rects.indexOf(r);if(i>-1)r.page.rects.splice(i,1);r.el.remove();if(selected===r)deselect();}
 delBtn.onclick=function(){if(selected){snapshot();removeBox(selected);}};document.addEventListener('keydown',function(e){if(!selected)return;if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();snapshot();removeBox(selected);}else if(e.key==='Escape')deselect();});
 function wireDrawing(page,marquee){var drawing=false,sx=0,sy=0,wrap=page.wrap;function rel(e){var b=wrap.getBoundingClientRect();return{x:Math.min(Math.max((e.clientX-b.left)/b.width,0),1),y:Math.min(Math.max((e.clientY-b.top)/b.height,0),1)};}wrap.addEventListener('pointerdown',function(e){if(mode!=='box')return;e.preventDefault();wrap.setPointerCapture(e.pointerId);drawing=true;var p=rel(e);sx=p.x;sy=p.y;marquee.style.display='block';marquee.style.left=sx*100+'%';marquee.style.top=sy*100+'%';marquee.style.width='0';marquee.style.height='0';});wrap.addEventListener('pointermove',function(e){if(!drawing)return;var p=rel(e);marquee.style.left=Math.min(sx,p.x)*100+'%';marquee.style.top=Math.min(sy,p.y)*100+'%';marquee.style.width=Math.abs(p.x-sx)*100+'%';marquee.style.height=Math.abs(p.y-sy)*100+'%';});function done(e){if(!drawing)return;drawing=false;marquee.style.display='none';var p=rel(e),w=Math.abs(p.x-sx),h=Math.abs(p.y-sy);if(w<.005||h<.005)return;snapshot();makeBox(page,Math.min(sx,p.x),Math.min(sy,p.y),w,h);}wrap.addEventListener('pointerup',done);wrap.addEventListener('pointercancel',function(){drawing=false;marquee.style.display='none';});}
-function wireTextSelection(page){page.wrap.addEventListener('pointerup',function(){if(mode!=='text')return;setTimeout(function(){var sel=window.getSelection();if(!sel||sel.isCollapsed||!sel.rangeCount)return;var b=page.wrap.getBoundingClientRect(),rs=Array.prototype.slice.call(sel.getRangeAt(0).getClientRects()).filter(function(r){return r.width>1&&r.height>1&&r.right>b.left&&r.left<b.right&&r.bottom>b.top&&r.top<b.bottom;});if(!rs.length)return; snapshot();rs.forEach(function(r){var pad=2,x1=Math.max(b.left,r.left-pad),y1=Math.max(b.top,r.top-pad),x2=Math.min(b.right,r.right+pad),y2=Math.min(b.bottom,r.bottom+Math.max(pad,r.height*DESCENDER));makeBox(page,(x1-b.left)/b.width,(y1-b.top)/b.height,(x2-x1)/b.width,(y2-y1)/b.height);});sel.removeAllRanges();say('Selected text was converted into '+rs.length+' redaction box'+(rs.length===1?'':'es')+'.');},0);});}
+/* ============================================================
+   Selecting text to redact.
+
+   Nothing is boxed until you say so. Committing on pointerup — which is what
+   this did — fires the instant a long press lands on a phone, so the word is
+   already black before the handles appear and a touch selection can never be
+   widened. On a desktop the same handler turns a stray click into a box. So
+   the selection stays put, a button appears beside it, and you can see exactly
+   what is about to be covered before it is.
+   ============================================================ */
+var pendingBoxes=null,selBtn=null,selTimer=null;
+
+function ensureSelBtn(){
+  if(selBtn)return selBtn;
+  selBtn=document.createElement('button');
+  selBtn.type='button';
+  selBtn.id='selBtn';
+  selBtn.className='selbtn';
+  selBtn.textContent='Black out';
+  selBtn.hidden=true;
+  // taking focus would collapse the selection; the boxes are already computed
+  selBtn.addEventListener('pointerdown',function(e){e.preventDefault();});
+  selBtn.addEventListener('click',function(e){e.preventDefault();commitSelection();});
+  document.body.appendChild(selBtn);
+  return selBtn;
+}
+
+function hideSelBtn(){
+  pendingBoxes=null;
+  if(selBtn)selBtn.hidden=true;
+}
+
+function clearTextSelection(){
+  var s=window.getSelection();
+  if(s&&s.rangeCount)s.removeAllRanges();
+  hideSelBtn();
+}
+
+function pageForRect(cr){
+  var cx=cr.left+cr.width/2,cy=cr.top+cr.height/2;
+  for(var i=0;i<pages.length;i++){
+    var b=pages[i].wrap.getBoundingClientRect();
+    if(cx>=b.left&&cx<=b.right&&cy>=b.top&&cy<=b.bottom)return pages[i];
+  }
+  return null;
+}
+
+/* One bar per line rather than one per text run, so a sentence split across
+   several runs does not become a row of touching boxes. */
+function mergeLines(list){
+  list.sort(function(a,b){return a.t-b.t||a.l-b.l;});
+  var out=[];
+  list.forEach(function(r){
+    for(var i=0;i<out.length;i++){
+      var o=out[i];
+      var overlap=Math.min(o.b,r.b)-Math.max(o.t,r.t);
+      var sameLine=overlap>.55*Math.min(o.b-o.t,r.b-r.t);
+      var touching=r.l<=o.r+4&&o.l<=r.r+4;
+      if(sameLine&&touching){
+        o.l=Math.min(o.l,r.l);o.t=Math.min(o.t,r.t);
+        o.r=Math.max(o.r,r.r);o.b=Math.max(o.b,r.b);
+        return;
+      }
+    }
+    out.push({l:r.l,t:r.t,r:r.r,b:r.b});
+  });
+  return out;
+}
+
+/* Selection -> boxes, in page coordinates. Every page the selection crosses is
+   included; the old per-page handler only ever boxed the page the pointer
+   happened to be released over. */
+function readSelection(){
+  var sel=window.getSelection();
+  if(!sel||!sel.rangeCount||sel.isCollapsed)return null;
+  var buckets=[];
+  for(var i=0;i<sel.rangeCount;i++){
+    var rects=sel.getRangeAt(i).getClientRects();
+    for(var j=0;j<rects.length;j++){
+      var cr=rects[j];
+      if(cr.width<=1||cr.height<=1)continue;
+      var page=pageForRect(cr);
+      if(!page)continue;                       // selection outside the pages
+      var bucket=null;
+      for(var k=0;k<buckets.length;k++)if(buckets[k].page===page)bucket=buckets[k];
+      if(!bucket){bucket={page:page,rects:[]};buckets.push(bucket);}
+      bucket.rects.push({l:cr.left,t:cr.top,r:cr.right,b:cr.bottom});
+    }
+  }
+  var out=[];
+  buckets.forEach(function(bucket){
+    var b=bucket.page.wrap.getBoundingClientRect();
+    if(!b.width||!b.height)return;
+    mergeLines(bucket.rects).forEach(function(m){
+      var pad=2,drop=Math.max(pad,(m.b-m.t)*DESCENDER);
+      var x1=Math.max(b.left,m.l-pad),y1=Math.max(b.top,m.t-pad);
+      var x2=Math.min(b.right,m.r+pad),y2=Math.min(b.bottom,m.b+drop);
+      if(x2-x1<=0||y2-y1<=0)return;
+      out.push({page:bucket.page,x:(x1-b.left)/b.width,y:(y1-b.top)/b.height,
+                w:(x2-x1)/b.width,h:(y2-y1)/b.height,
+                cx:(x1+x2)/2,bottom:y2});
+    });
+  });
+  return out.length?out:null;
+}
+
+function placeSelBtn(boxes){
+  var btn=ensureSelBtn();
+  btn.hidden=false;
+  var last=boxes[boxes.length-1];
+  var w=btn.offsetWidth||110,h=btn.offsetHeight||34;
+  var left=Math.min(Math.max(8,last.cx-w/2),window.innerWidth-w-8);
+  var top=last.bottom+10;
+  if(top+h>window.innerHeight-8)top=Math.max(8,last.bottom-h-10);
+  btn.style.left=Math.round(left)+'px';
+  btn.style.top=Math.round(top)+'px';
+}
+
+function refreshSelection(){
+  if(mode!=='text'){hideSelBtn();return;}
+  var boxes=readSelection();
+  if(!boxes){hideSelBtn();return;}
+  pendingBoxes=boxes;
+  placeSelBtn(boxes);
+}
+
+function commitSelection(){
+  if(!pendingBoxes||!pendingBoxes.length)return;
+  var boxes=pendingBoxes;
+  snapshot();
+  boxes.forEach(function(b){makeBox(b.page,b.x,b.y,b.w,b.h);});
+  clearTextSelection();
+  say('Blacked out '+boxes.length+' line'+(boxes.length===1?'':'s')+'. Undo if that caught too much.');
+}
+
+document.addEventListener('selectionchange',function(){
+  clearTimeout(selTimer);
+  // wait for the gesture to settle: on a phone the selection keeps changing
+  // while the handles are being dragged
+  selTimer=setTimeout(refreshSelection,120);
+});
+window.addEventListener('scroll',function(){if(pendingBoxes)refreshSelection();},true);
+window.addEventListener('resize',function(){if(pendingBoxes)refreshSelection();});
+document.addEventListener('keydown',function(e){
+  if(mode!=='text'||!pendingBoxes)return;
+  if(e.key==='Enter'){e.preventDefault();commitSelection();}
+  else if(e.key==='Escape'){e.preventDefault();clearTextSelection();}
+});
+
 function wireBox(r,del,grip){var dragging=false,resizing=false,moved=false,startX=0,startY=0,origin=null;function scale(){var b=r.page.wrap.getBoundingClientRect();return{w:b.width,h:b.height};}del.onpointerdown=function(e){e.stopPropagation();};del.onclick=function(e){e.stopPropagation();snapshot();removeBox(r);};grip.addEventListener('pointerdown',function(e){if(mode!=='move')return;e.stopPropagation();e.preventDefault();grip.setPointerCapture(e.pointerId);select(r);resizing=true;moved=false;startX=e.clientX;startY=e.clientY;origin={w:r.w,h:r.h};});grip.addEventListener('pointermove',function(e){if(!resizing)return;if(!moved){snapshot();moved=true;}var s=scale();r.w=Math.max(.005,Math.min(origin.w+(e.clientX-startX)/s.w,1-r.x));r.h=Math.max(.005,Math.min(origin.h+(e.clientY-startY)/s.h,1-r.y));place(r);});grip.onpointerup=grip.onpointercancel=function(){resizing=false;};r.el.addEventListener('pointerdown',function(e){if(mode!=='move')return;e.preventDefault();r.el.setPointerCapture(e.pointerId);select(r);dragging=true;moved=false;startX=e.clientX;startY=e.clientY;origin={x:r.x,y:r.y};});r.el.addEventListener('pointermove',function(e){if(!dragging)return;var dx=e.clientX-startX,dy=e.clientY-startY;if(!moved){if(Math.abs(dx)<3&&Math.abs(dy)<3)return;snapshot();moved=true;}var s=scale();r.x=Math.max(0,Math.min(origin.x+dx/s.w,1-r.w));r.y=Math.max(0,Math.min(origin.y+dy/s.h,1-r.h));place(r);});r.el.onpointerup=r.el.onpointercancel=function(){dragging=false;};}
 function boxesForMatch(page,start,end){var its=page.searchRanges.filter(function(r){return r.end>start&&r.start<end;}).map(function(r){return r.item;});if(!its.length)return[];var groups=[];its.forEach(function(it){var cy=it.y+it.h/2,g=groups.length?groups[groups.length-1]:null;if(!g||Math.abs(cy-g.cy)>Math.max(it.h,g.h)*.7){g={x1:it.x,y1:it.y,x2:it.x+it.w,y2:it.y+it.h,cy:cy,h:it.h};groups.push(g);}else{g.x1=Math.min(g.x1,it.x);g.y1=Math.min(g.y1,it.y);g.x2=Math.max(g.x2,it.x+it.w);g.y2=Math.max(g.y2,it.y+it.h);g.cy=(g.y1+g.y2)/2;g.h=g.y2-g.y1;}});return groups.map(function(g){var padX=Math.max(3,g.h*.1),padTop=Math.max(2,g.h*.08),padBot=Math.max(3,g.h*DESCENDER),x1=Math.max(0,g.x1-padX),y1=Math.max(0,g.y1-padTop),x2=Math.min(page.intrinsicW,g.x2+padX),y2=Math.min(page.intrinsicH,g.y2+padBot);return{x:x1/page.intrinsicW,y:y1/page.intrinsicH,w:(x2-x1)/page.intrinsicW,h:(y2-y1)/page.intrinsicH};});}
 function redactMatches(pattern,label){var found=[];pages.forEach(function(p){var m;pattern.lastIndex=0;while((m=pattern.exec(p.searchText))){if(m[0].length===0){pattern.lastIndex++;continue;}found.push({page:p,start:m.index,end:m.index+m[0].length,text:m[0],label:label});}});if(!found.length)return 0;snapshot();var n=0;found.forEach(function(f){boxesForMatch(f.page,f.start,f.end).forEach(function(b){makeBox(f.page,b.x,b.y,b.w,b.h);n++;});});return n;}
