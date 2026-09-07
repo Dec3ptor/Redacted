@@ -98,3 +98,40 @@ encryption for anyone with access to the browser profile.
   and the key has everything, and a file already sent cannot be recalled.
 - Third-party PDF optimisers and image recompressors may discard the recovery
   data. Share the exported file itself, not a re-encoded derivative.
+
+## Two redaction methods
+Blackout offers both approaches, and reversible recovery works with either —
+the encrypted payload holds the exact original source file, which is unrelated
+to how the visible output was produced.
+
+**Flatten to images.** Every page is rendered to pixels, the marks are painted
+into those pixels, and a new file is built from the results. No text object
+survives anywhere, so there is nothing to recover under a mark or outside one.
+Blunt, and hard to get wrong.
+
+**Remove the text.** The glyphs under each mark are deleted from the page
+content stream and everything else is left untouched, so the output stays real
+searchable text everywhere that was not redacted. This is the method
+professional tools use, and the one that fails without looking like it has: the
+mark is drawn either way, so a file that kept a word is indistinguishable from
+one that did not.
+
+Because of that, nothing this method produces is offered until it has been
+read back and proved. The output is re-parsed and every surviving character is
+placed; if any non-space character still sits inside a mark, the file is not
+saved and the reason is shown. The editor also declines outright rather than
+guess when a page holds something it cannot reason about — an image or form
+drawn under a mark, an inline image, a rotated page, a text operator it does
+not rewrite, or a text encoding it cannot cut safely.
+
+One approximation is worth stating. A run's total width is known exactly, but
+the widths of the individual glyphs inside it are not, so character positions
+within a run are estimated by spreading them evenly across it. On a
+proportional face that drifts — around 10pt across a line of Times — which is
+too loose to decide what to delete. The cut is therefore deliberately generous,
+a character wider at each end than the estimate calls for, and the mark is then
+grown to cover whatever was actually taken. Two properties hold together as a
+result: everything under a mark is gone from the file, and everything gone from
+the file is under a mark. The cost is that a neighbouring character is
+sometimes taken as well, which is the safe direction and stays invisible
+because the mark grows with it.
