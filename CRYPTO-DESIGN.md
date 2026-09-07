@@ -155,6 +155,38 @@ words. The editor's own boxes — search, smart scan and text selection — are
 built along the run direction for the same reason, so a mark is never drawn
 beside the glyphs it claims to cover.
 
+Pairing each drawing operator with the run the reader reports for it is the
+part that took the most getting right, and every mistake in it failed the same
+way in both directions at once — text under a mark surviving, and text nobody
+marked being cut. Counting was the original mistake: the Nth operator was given
+the Nth run. Those two lists are not the same length in a real document. The
+reader emits end-of-line entries with no operator behind them, splits one
+operator's run into pieces where it sees a wide gap, and reports a page's runs
+in an order of its own. A twenty-four page offer letter disagreed by eight on
+its first page alone. Operators are therefore matched to runs by position: the
+text matrix says where each one starts, the run is the one the reader puts
+there, each run is claimed once, and the byte count — the only exact number
+available — decides where a split run ends. The tolerance is tight across the
+line and generous along it, because a run beginning with spaces is reported
+from its first visible glyph and so starts ahead of the point the matrix names,
+never behind it.
+
+Two smaller faults in the same file are worth recording because neither was
+visible in the result. `TextDecoder('latin1')` is an alias for windows-1252,
+not ISO-8859-1: reading a content stream through it and writing the bytes back
+rewrote everything in 0x80-0x9F, so a byte meaning a curly quote came back as a
+control code. The page still looked right; its text did not. And the spacing
+adjustment that holds a line together after a cut was derived from the font
+size alone, which is only the conversion to text space if nothing else scales
+the run — a document authored at ten times size was shifted ten times too far.
+The run's own transform carries the whole chain and is used instead.
+
+Neither of those would have been caught by asking only whether the marked text
+was gone, which is why the proof now has a second half: the result is also
+counted against the original, and every character outside the marks actually
+painted has to still be there. A file that loses something it was not asked to
+lose is refused exactly like one that keeps something it was.
+
 One approximation is worth stating. A run's total width is known exactly, but
 the widths of the individual glyphs inside it are not, so character positions
 within a run are estimated by spreading them evenly across it. On a

@@ -386,7 +386,10 @@ async function buildBySurgery(){
   var res=await window.BlackoutSurgical.redact(bytes,boxes);
   if(!res.ok)return res;
   say('Checking the result…');
-  var proof=await window.BlackoutSurgical.verify(res.bytes,boxes);
+  /* The original and the marks that were actually painted go in with it, so
+     the check can prove both halves: nothing marked survived, and nothing
+     unmarked was taken. */
+  var proof=await window.BlackoutSurgical.verify(res.bytes,boxes,{source:bytes,marks:res.marks});
   if(!proof.ok){
     return{ok:false,reason:proof.reason||('The check found '+proof.leaked+' character'+(proof.leaked===1?'':'s')+' still under a mark, so nothing was saved.')};
   }

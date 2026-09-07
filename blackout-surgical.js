@@ -26,7 +26,25 @@
 (function(){
 'use strict';
 
-var td=new TextDecoder('latin1');
+/* A content stream is bytes, and this module works on it as a string so it can
+   copy the untouched parts through verbatim. The two have to map one to one,
+   and TextDecoder cannot do it: 'latin1' there is an alias for windows-1252,
+   which turns the bytes 0x80-0x9F into typographic characters — 0x92 becomes a
+   curly apostrophe — and writing them back as single bytes then yields 0x19.
+   Every byte in that range inside a string would be quietly rewritten into a
+   control code, and the page would still look right while its text came out
+   wrong. So the mapping is done here, where it is exactly one byte per code
+   unit in both directions. */
+function fromBytes(bytes){
+  var out='',n=bytes.length,i=0,CH=0x8000;
+  while(i<n)out+=String.fromCharCode.apply(null,bytes.subarray(i,i+=CH));
+  return out;
+}
+function toBytes(str){
+  var n=str.length,out=new Uint8Array(n);
+  for(var i=0;i<n;i++)out[i]=str.charCodeAt(i)&255;
+  return out;
+}
 function bail(reason){ return {ok:false,reason:reason}; }
 
 /* ---------- content stream scanning ---------- */
@@ -98,6 +116,67 @@ function unitBox(m){
          x2:Math.max.apply(null,xs),y2:Math.max.apply(null,ys)};
 }
 function overlaps(a,b){ return a.x1<b.x2&&b.x1<a.x2&&a.y1<b.y2&&b.y1<a.y2; }
+
+/* Pairing a show operator with the run the reader reports for it used to be
+   done by counting: the Nth operator got the Nth item. That holds only if the
+   two lists are the same length, and in a real document they are not — the
+   reader emits end-of-line markers, splits a run where it sees a wide gap, and
+   skips whatever draws no glyphs. One disagreement and every run after it is
+   matched to the wrong operator, which cuts text nobody marked and leaves text
+   somebody did. Counting was the mistake, so the position is tracked instead:
+   the text matrix says where each operator starts, and the run is the one the
+   reader puts at that point. When the two disagree the pairing resynchronises
+   rather than carrying the error forward. */
+function textOrigin(tm,ctm){
+  var m=mul(tm,ctm),su=Math.hypot(m[0],m[1])||1;
+  return{x:m[4],y:m[5],scale:su,ux:m[0]/su,uy:m[1]/su};
+}
+
+/* The reader does not always give one run per operator: a wide gap inside a TJ
+   makes it break the run into pieces, and a page can hold twice as many pieces
+   as operators. Only the first piece would then ever be looked at, so a mark
+   over the rest of the line covers text nothing cuts. The pieces are collected
+   by following the run along its own direction, and the byte count decides
+   where the operator really ends — it is the one number here that is exact. */
+function combineFrags(frags){
+  if(frags.length===1)return frags[0];
+  var f0=frags[0],fl=frags[frags.length-1],t=f0.transform;
+  var su=Math.hypot(t[0],t[1])||1,ux=t[0]/su,uy=t[1]/su;
+  var ex=fl.transform[4]+ux*(fl.width||0),ey=fl.transform[5]+uy*(fl.width||0);
+  return{str:frags.map(function(f){return f.str;}).join(''),
+         width:Math.hypot(ex-t[4],ey-t[5]),height:f0.height,transform:t};
+}
+/* Nearest unclaimed run to the point, anywhere in the list. Reading order is
+   not assumed either: the reader may report a page's runs in an order of its
+   own, and a footer drawn first is enough to put every later search past the
+   run it wanted. Each run is claimed once, so two operators cannot take the
+   same one. */
+/* Nearest unclaimed run to the point, measured along the run rather than as a
+   plain distance, and anywhere in the list. Two things make a plain distance
+   wrong. Reading order is not the operator order — a footer drawn first is
+   enough to put every later search past the run it wanted — so the whole list
+   is searched and each run claimed once. And a run may begin with spaces,
+   which the reader leaves out of what it reports, so its first glyph sits
+   ahead of the point the text matrix names; never behind it. The tolerance is
+   therefore tight across the line and generous along it. */
+function matchItem(ctx,x,y,ux,uy,tol,ahead){
+  var best=-1,bestD=Infinity;
+  for(var k=0;k<ctx.items.length;k++){
+    if(ctx.used[k])continue;
+    var t=ctx.items[k].transform,dx=t[4]-x,dy=t[5]-y;
+    var along=dx*ux+dy*uy,across=Math.abs(dx*-uy+dy*ux);
+    if(across>tol)continue;
+    if(along<-tol||along>ahead)continue;
+    var d=Math.abs(along)+across;
+    if(d<bestD){bestD=d;best=k;}
+  }
+  return best;
+}
+function numsOf(ops,n){
+  var v=[];
+  for(var i=ops.length-1;i>=0&&v.length<n;i--)if(ops[i].t==='num')v.unshift(ops[i].v);
+  return v.length===n?v:null;
+}
 
 /* Marks are fractions of the page as the reader displays it. Content lives in
    the page's own unrotated space, so a rotated page has to be turned back
@@ -356,6 +435,7 @@ async function walk(ctx,src,resources,ctm0){
   var toks=scan(src);
   if(!toks)return bail('A page stream could not be read.');
   var edits=[],local=[],ctm=ctm0.slice(),stack=[],fontSize=0,gStart=0,operandStart=null;
+  var tm=[1,0,0,1,0,0],tlm=[1,0,0,1,0,0],leading=0;
 
   for(var ti=0;ti<toks.length;ti++){
     var tk=toks[ti];
@@ -369,6 +449,12 @@ async function walk(ctx,src,resources,ctm0){
     else if(op==='Q')ctm=stack.pop()||[1,0,0,1,0,0];
     else if(op==='cm'&&ops.length>=6)ctm=mul(ops.slice(-6).map(function(o){return o.v||0;}),ctm);
     else if(op==='Tf'&&ops.length){ var l=ops[ops.length-1]; if(l.t==='num')fontSize=l.v; }
+    else if(op==='BT'){ tm=[1,0,0,1,0,0];tlm=tm.slice(); }
+    else if(op==='TL'){ var tl=numsOf(ops,1); if(tl)leading=tl[0]; }
+    else if(op==='Td'){ var td1=numsOf(ops,2); if(td1){tlm=mul([1,0,0,1,td1[0],td1[1]],tlm);tm=tlm.slice();} }
+    else if(op==='TD'){ var td2=numsOf(ops,2); if(td2){leading=-td2[1];tlm=mul([1,0,0,1,td2[0],td2[1]],tlm);tm=tlm.slice();} }
+    else if(op==='Tm'){ var m6=numsOf(ops,6); if(m6){tlm=m6.slice();tm=m6.slice();} }
+    else if(op==='T*'){ tlm=mul([1,0,0,1,0,-leading],tlm);tm=tlm.slice(); }
     else if(op==='BI'){
       var area=unitBox(ctm),hitAny=null;
       for(var q=0;q<ctx.rects.length;q++)if(overlaps(area,ctx.rects[q])){hitAny=true;break;}
@@ -414,7 +500,7 @@ async function walk(ctx,src,resources,ctm0){
         }
       }else if(subName.indexOf('Form')>=0&&xobj){
         var inner=null;
-        try{ inner=td.decode(P.decodePDFRawStream(xobj).decode()); }catch(e){ inner=null; }
+        try{ inner=fromBytes(P.decodePDFRawStream(xobj).decode()); }catch(e){ inner=null; }
         if(inner!==null){
           var fdict=xobj.dict||xobj;
           var mtx=fdict.get?fdict.get(P.PDFName.of('Matrix')):null;
@@ -425,9 +511,7 @@ async function walk(ctx,src,resources,ctm0){
           var sub2=await walk(ctx,inner,fres||resources,mul(fm,ctm));
           if(!sub2.ok)return sub2;
           if(sub2.text!==null){
-            var fbytes=new Uint8Array(sub2.text.length);
-            for(var z=0;z<sub2.text.length;z++)fbytes[z]=sub2.text.charCodeAt(z)&255;
-            var clone=ctx.doc.context.flateStream(fbytes,copyFormDict(ctx,fdict));
+            var clone=ctx.doc.context.flateStream(toBytes(sub2.text),copyFormDict(ctx,fdict));
             var cref=ctx.doc.context.register(clone);
             var cn=addXObject(ctx,resources,cref);
             if(cn&&nameTok){
@@ -445,14 +529,50 @@ async function walk(ctx,src,resources,ctm0){
       }
     }
     else if(op==='Tj'||op==='TJ'||op==="'"||op==='"'){
-      var item=ctx.items[ctx.itemIdx++];
+      /* The other half of the pairing: a show operator holding nothing draws
+         no glyphs, so the reader gives it no item and it must not take the
+         next one. Read the operands before claiming an item. */
+      /* ' and " start a new line before they show anything. */
+      if(op==="'"||op==='"'){ tlm=mul([1,0,0,1,0,-leading],tlm);tm=tlm.slice(); }
+      var els=elementsOf(toks,gStart,ti,src,op);
+      var totalCodes=els?els.reduce(function(a,e){return a+(e.s?e.codes.length:0);},0):0;
+      var o=textOrigin(tm,ctm),item=null;
+      if(totalCodes){
+        var tol=Math.max(0.5,fontSize*o.scale*0.3);
+        /* A TJ may open with a spacing number, which moves the first glyph off
+           the point the text matrix names before anything is drawn. The reader
+           reports the run where the glyphs are, so start looking there. */
+        var lead=0;
+        for(var li=0;li<els.length&&!els[li].s;li++)lead+=els[li].v||0;
+        var shift=-lead/1000*fontSize*o.scale;
+        var cx=o.x+o.ux*shift,cy=o.y+o.uy*shift;
+        var got=[],at2=[],sum=[],chars2=0;
+        while(got.length<32){
+          var at=matchItem(ctx,cx,cy,o.ux,o.uy,tol,got.length?tol:Math.max(tol,fontSize*o.scale*3));
+          if(at<0)break;
+          var f=ctx.items[at];
+          ctx.used[at]=true;got.push(f);at2.push(at);
+          chars2+=f.str.length;sum.push(chars2);
+          if(chars2>=totalCodes)break;             // cannot hold more bytes than it has
+          cx+=o.ux*(f.width||0);cy+=o.uy*(f.width||0);
+        }
+        /* Prefer the run that accounts for every byte; a two-byte encoding
+           accounts for them in half as many characters. */
+        var take=-1;
+        for(var q2=sum.length-1;q2>=0;q2--)if(sum[q2]===totalCodes){take=q2;break;}
+        if(take<0)for(var q3=0;q3<sum.length;q3++)if(sum[q3]*2===totalCodes){take=q3;break;}
+        if(take<0&&got.length)take=0;              // fall back to the first piece
+        for(var q4=take+1;q4<at2.length;q4++)ctx.used[at2[q4]]=false;   // give the rest back
+        if(take>=0)item=combineFrags(got.slice(0,take+1));
+      }
+      /* Advance along the line by what the run actually measured, so the next
+         operator on the same line is looked for in the right place. */
+      if(item&&item.width)tm=mul([1,0,0,1,item.width/o.scale,0],tm);
       if(item&&item.str){
         var rect=itemRect(item),mark=null;
         for(var k2=0;k2<ctx.rects.length;k2++)if(overlaps(rect,ctx.rects[k2])){mark=ctx.rects[k2];break;}
         if(mark){
-          var els=elementsOf(toks,gStart,ti,src,op);
-          if(els){
-            var totalCodes=els.reduce(function(a,e){return a+(e.s?e.codes.length:0);},0);
+          {
             var chars=item.str.length;
             var bpc=totalCodes===chars?1:(totalCodes===chars*2?2:0);
             var cover=coverageOf(item,rect,mark);
@@ -462,8 +582,17 @@ async function walk(ctx,src,resources,ctm0){
               bpc=1;cover={from:0,to:totalCodes,box:rect};
               chars=totalCodes;
             }
+            /* The gap left by the cut has to be given back in text space
+               thousandths, but the width came out of the reader in page
+               units. Font size alone does not convert between them: the text
+               matrix and every cm before it scale the run as well, and a
+               document authored at ten times size would be shifted ten times
+               too far. The run's own transform already carries the whole
+               chain, so take the scale from that. */
+            var g0=itemGeom(item),scale=Math.hypot(item.transform[0],item.transform[1]);
+            if(!(scale>0))scale=fontSize>0?fontSize:1;
             var gap=(item.width||0)*((cover.to-cover.from)/Math.max(1,chars));
-            var adj=fontSize>0?gap/fontSize*1000:0;
+            var adj=gap/scale*1000;
             var body=cutElements(els,cover.from,cover.to,bpc,adj);
             var prefix=op==="'"?'T* ':(op==='"'?quotePrefix(ops)+'T* ':'');
             edits.push({a:opStart,b:tk.b,text:prefix+body});
@@ -523,7 +652,7 @@ async function redact(pdfBytes,pageBoxes){
 
   var pages=doc.getPages();
   if(pages.length!==src.numPages)return bail('The document structure is not one this editor can follow.');
-  var seq=0,replaced=[];
+  var seq=0,replaced=[],drawn=[];
 
   for(var pi=0;pi<pages.length;pi++){
     var boxes=pageBoxes[pi]||[];
@@ -556,8 +685,14 @@ async function redact(pdfBytes,pageBoxes){
       }catch(e){}
     }
 
+    /* One item per show operator is the whole basis of the pairing, so the
+       list has to hold exactly the items that came from one. The reader also
+       emits end-of-line markers — empty strings with no operator behind them —
+       and a real document is full of them. Left in, the first one shifts every
+       run after it onto the wrong operator: text under a mark survives, text
+       that was never marked gets cut, and both look like the tool working. */
     var items=(await jsPage.getTextContent({disableCombineTextItems:true})).items
-      .filter(function(it){return typeof it.str==='string';});
+      .filter(function(it){return it&&typeof it.str==='string'&&it.str.length&&it.transform;});
 
     var key=P.PDFName.of('Contents'),contents=page.node.get(key);
     var refs=contents&&contents.asArray?contents.asArray():(contents?[contents]:[]);
@@ -566,8 +701,8 @@ async function redact(pdfBytes,pageBoxes){
     for(var r=0;r<refs.length;r++){
       var st=doc.context.lookup(refs[r]);
       if(!st)return bail('A page stream could not be read.');
-      try{ parts.push(td.decode(P.decodePDFRawStream(st).decode())); }
-      catch(e){ try{ parts.push(td.decode(st.getContents())); }catch(e2){ return bail('A page stream could not be decoded.'); } }
+      try{ parts.push(fromBytes(P.decodePDFRawStream(st).decode())); }
+      catch(e){ try{ parts.push(fromBytes(st.getContents())); }catch(e2){ return bail('A page stream could not be decoded.'); } }
     }
     var streamText=parts.join('\n');
 
@@ -576,7 +711,7 @@ async function redact(pdfBytes,pageBoxes){
 
     var grown=rects.map(function(r){return{x1:r.x1,y1:r.y1,x2:r.x2,y2:r.y2};});
     var ctx={
-      doc:doc,jsPage:jsPage,items:items,itemIdx:0,images:images,imgIdx:0,
+      doc:doc,jsPage:jsPage,items:items,used:items.map(function(){return false;}),images:images,imgIdx:0,
       rects:rects,seq:seq,replaced:replaced,
       grow:function(b){
         for(var i=0;i<rects.length;i++){
@@ -594,9 +729,7 @@ async function redact(pdfBytes,pageBoxes){
     if(!res.ok)return res;
 
     if(res.text!==null){
-      var bytesOut=new Uint8Array(res.text.length);
-      for(var z2=0;z2<res.text.length;z2++)bytesOut[z2]=res.text.charCodeAt(z2)&255;
-      var newRef=doc.context.register(doc.context.flateStream(bytesOut));
+      var newRef=doc.context.register(doc.context.flateStream(toBytes(res.text)));
       page.node.set(key,doc.context.obj([newRef]));
       refs.forEach(function(rf){ try{doc.context.delete(rf);}catch(e){} });
     }
@@ -623,6 +756,7 @@ async function redact(pdfBytes,pageBoxes){
       draw.push([r.x1.toFixed(3),r.y1.toFixed(3),(r.x2-r.x1).toFixed(3),(r.y2-r.y1).toFixed(3),'re','f'].join(' '));
     });
     draw.push('Q');
+    drawn[pi]=grown;
     var markRef=doc.context.register(doc.context.stream(new TextEncoder().encode('\n'+draw.join('\n')+'\n')));
     var cur=page.node.get(key);
     if(cur&&cur.push)cur.push(markRef);
@@ -640,7 +774,8 @@ async function redact(pdfBytes,pageBoxes){
   });
 
   try{
-    return{ok:true,bytes:new Uint8Array(await doc.save({useObjectStreams:true,addDefaultPage:false,updateFieldAppearances:false}))};
+    return{ok:true,marks:drawn,
+      bytes:new Uint8Array(await doc.save({useObjectStreams:true,addDefaultPage:false,updateFieldAppearances:false}))};
   }catch(e){ return bail('The edited document could not be written.'); }
 }
 
@@ -684,7 +819,7 @@ function stillDrawn(doc,ref){
    sits flush against the mark, so a bounding-box test would call each of them
    a leak; what matters is whether a glyph is under the mark, and a space
    reveals nothing. */
-async function verifyRedaction(outBytes,pageBoxes){
+async function verifyRedaction(outBytes,pageBoxes,opts){
   var pdfjsLib=window.pdfjsLib;
   if(!pdfjsLib)return bail('The PDF reader did not load.');
   var doc;
@@ -722,7 +857,82 @@ async function verifyRedaction(outBytes,pageBoxes){
       }
     }
   }
-  return{ok:leaked===0,leaked:leaked,where:where};
+  if(leaked)return{ok:false,leaked:leaked,where:where,lost:0};
+
+  /* The other half of the promise, and the one a leak check cannot make. Every
+     way this can pair a run with the wrong operator cuts in two directions at
+     once: something under a mark survives, and something never marked is
+     destroyed. A leak check only sees the first. So the file is also read
+     against the original: every character that was outside the marks actually
+     painted has to still be there, in the same place. Anything missing means
+     the edit reached past the marks, and the file is not offered either. */
+  if(opts&&opts.source&&opts.marks){
+    var lost=await survivalCheck(outBytes,opts.source,opts.marks,doc);
+    if(lost&&lost.reason)return bail(lost.reason);
+    if(lost&&lost.missing)
+      return{ok:false,leaked:0,lost:lost.missing,where:lost.where,
+             reason:'The check found '+lost.missing+' character'+(lost.missing===1?'':'s')+
+                    ' outside your marks missing from the result, so nothing was saved.'};
+  }
+  return{ok:true,leaked:0,lost:0,where:where};
+}
+
+/* What survived, compared against what should have. Every character outside
+   the marks that were actually painted is counted on both sides and the two
+   tallies have to match, character for character. Counting rather than
+   matching positions is deliberate: cutting a run re-spaces it slightly, so a
+   surviving character can sit a fraction of a point from where it was, and a
+   position test would call that a loss and throw away a perfectly good file.
+   What cannot move is which characters are there. */
+async function survivalCheck(outBytes,srcBytes,marks,outDoc){
+  var pdfjsLib=window.pdfjsLib,srcDoc;
+  try{ srcDoc=await pdfjsLib.getDocument({data:srcBytes.slice()}).promise; }
+  catch(e){ return{reason:'The original could not be re-read for checking.'}; }
+  if(srcDoc.numPages!==outDoc.numPages)return{reason:'The result does not have the same pages as the original.'};
+
+  /* Only the original's characters are placed against the marks. The result's
+     are simply counted: the leak check above has already established that
+     nothing survived under a mark, so everything left in the result is a
+     survivor, and asking where it sits would only reintroduce the boundary
+     doubt this check exists to avoid. */
+  async function tally(d,i,boxes){
+    var page=await d.getPage(i);
+    var items=(await page.getTextContent({disableCombineTextItems:true})).items;
+    var counts={},total=0;
+    items.forEach(function(it){
+      if(!it||!it.str||!it.transform)return;
+      var g=itemGeom(it),n=it.str.length;
+      if(!n||g.len<=0)return;
+      for(var c=0;c<n;c++){
+        var ch=it.str[c];
+        if(!ch.trim())continue;
+        var q=geomPoint(g,g.len*((c+0.5)/n),(g.b0+g.b1)/2);
+        var covered=false;
+        for(var k=0;k<boxes.length;k++){
+          var m=boxes[k];
+          if(q[0]>m.x1&&q[0]<m.x2&&q[1]>m.y1&&q[1]<m.y2){covered=true;break;}
+        }
+        if(covered)continue;
+        counts[ch]=(counts[ch]||0)+1;total++;
+      }
+    });
+    return{counts:counts,total:total};
+  }
+
+  var missing=0,where=[];
+  for(var i=1;i<=srcDoc.numPages;i++){
+    var boxes=(marks&&marks[i-1])||[];
+    if(!boxes.length)continue;                       // nothing was edited here
+    var before=await tally(srcDoc,i,boxes),after=await tally(outDoc,i,[]);
+    Object.keys(before.counts).forEach(function(ch){
+      var gap=before.counts[ch]-(after.counts[ch]||0);
+      if(gap>0){
+        missing+=gap;
+        if(where.length<5)where.push('page '+i+' lost '+gap+' \u00d7 \"'+ch+'\"');
+      }
+    });
+  }
+  return{missing:missing,where:where};
 }
 
 window.BlackoutSurgical={redact:redact,verify:verifyRedaction};
