@@ -8,7 +8,7 @@ var drop=$('drop'),fileInput=$('file'),editor=$('editor'),pagesEl=$('pages'),sta
 function say(m){statusEl.textContent=m||'';}
 function escRegExp(s){return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}
 function setMode(m){mode=m;document.body.dataset.mode=m;['Box','Text','Move'].forEach(function(n){$('mode'+n).setAttribute('aria-pressed',m===n.toLowerCase());});
- hint.textContent=m==='box'?'Drag a box over anything you want hidden.':m==='text'?'Select PDF text the way you would anywhere else, then press Black out. On a phone, long-press a word and drag the handles first. Nothing is covered until you confirm.':'Scroll normally. Tap a box to select it, then drag, resize, or delete it.';if(m!=='move')deselect();if(m!=='text')clearTextSelection();updateTextScales();}
+ hint.textContent=m==='box'?'Drag a box over anything you want hidden.':m==='text'?'Drag across the words you want gone. Staying on one line selects only that line; drag onto other lines to take them too. Double-click covers a single word.':'Scroll normally. Tap a box to select it, then drag, resize, or delete it.';if(m!=='move')deselect();if(m!=='text')clearTextSelection();updateTextScales();}
 $('modeBox').onclick=function(){setMode('box');};$('modeText').onclick=function(){if(!sourceIsPDF){say('Text selection is available for PDFs. Use Draw box for images.');return;}setMode('text');};$('modeMove').onclick=function(){setMode('move');};
 function intake(file){if(!file)return;resetAll();clearTextSelection();$('resumebar').hidden=true;sourceFile=file;baseName=(file.name||'document').replace(/\.[^.]+$/,'')||'document';$('fname').textContent=file.name;sourceIsPDF=file.type==='application/pdf'||/\.pdf$/i.test(file.name);$('saveMode').style.display='flex';if(sourceIsPDF){$('searchbar').style.display='flex';say('Opening PDF…');openPDF(file);}else if((file.type||'').indexOf('image/')===0||/\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name)){$('searchbar').style.display='none';say('Opening image…');openImage(file);}else say('Use a PDF or image file.');}
 drop.onclick=function(){fileInput.click();};drop.onkeydown=function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();fileInput.click();}};['dragenter','dragover'].forEach(function(ev){drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.add('hot');});});['dragleave','drop'].forEach(function(ev){drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.remove('hot');});});drop.addEventListener('drop',function(e){if(e.dataTransfer.files.length)intake(e.dataTransfer.files[0]);});fileInput.onchange=function(){if(this.files.length)intake(this.files[0]);};$('newBtn').onclick=function(){fileInput.value='';resetAll();dropSession();};
@@ -23,7 +23,7 @@ function renderPDFBytes(bytes){return pdfjsLib.getDocument({data:bytes}).promise
 var DESCENDER=.3;
 function makeTextItems(tc,vp){return (tc.items||[]).filter(function(it){return it.str&&it.str.trim();}).map(function(it){var tx=pdfjsLib.Util.transform(vp.transform,it.transform),h=Math.max(2,Math.hypot(tx[2],tx[3])||Math.abs(tx[3])||10),w=Math.max(1,(it.width||0)*vp.scale);return{str:it.str,x:tx[4],y:tx[5]-h,w:w,h:h};});}
 function openImage(file){file.arrayBuffer().then(async function(buf){var bytes=new Uint8Array(buf);reversiblePayload=await BlackoutCore.extractPngRecovery(bytes);var blob=new Blob([buf],{type:file.type||'image/png'}),url=URL.createObjectURL(blob),img=new Image();img.onload=function(){var c=document.createElement('canvas');c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext('2d').drawImage(img,0,0);URL.revokeObjectURL(url);addPage(c,img.naturalWidth,img.naturalHeight,1,1,[],img.naturalWidth,img.naturalHeight);if(reversiblePayload){$('restorePanel').style.display='block';$('restorePanel').querySelector('strong').textContent='This is a reversible Blackout file.';$('restoreText').textContent='Enter its recovery key to reveal the exact original file.';}ready(reversiblePayload?'Reversible recovery data detected.':'');};img.onerror=function(){URL.revokeObjectURL(url);say('That image could not be opened.');};img.src=url;}).catch(function(){say('That image could not be read.');});}
-function addPage(base,wPt,hPt,num,total,textItems,intrinsicW,intrinsicH){var holder=document.createElement('div');holder.className='page';if(total>1){var lbl=document.createElement('div');lbl.className='pagenum';lbl.textContent='Page '+num+' of '+total;holder.appendChild(lbl);}var wrap=document.createElement('div');wrap.className='canvaswrap';var disp=document.createElement('canvas');disp.width=base.width;disp.height=base.height;disp.getContext('2d').drawImage(base,0,0);wrap.appendChild(disp);var textLayer=document.createElement('div');textLayer.className='textlayer';var textInner=document.createElement('div');textInner.className='textinner';textLayer.appendChild(textInner);wrap.appendChild(textLayer);var layer=document.createElement('div');layer.className='layer';var marquee=document.createElement('div');marquee.className='marquee';layer.appendChild(marquee);wrap.appendChild(layer);holder.appendChild(wrap);pagesEl.appendChild(holder);var p={base:base,redactedBase:null,unlockedBase:null,disp:disp,wrap:wrap,layer:layer,textLayer:textLayer,textInner:textInner,rects:[],wPt:wPt,hPt:hPt,textItems:textItems||[],intrinsicW:intrinsicW||base.width,intrinsicH:intrinsicH||base.height};pages.push(p);buildTextLayer(p);buildSearchIndex(p);wireDrawing(p,marquee);watchPageWidth(p);}
+function addPage(base,wPt,hPt,num,total,textItems,intrinsicW,intrinsicH){var holder=document.createElement('div');holder.className='page';if(total>1){var lbl=document.createElement('div');lbl.className='pagenum';lbl.textContent='Page '+num+' of '+total;holder.appendChild(lbl);}var wrap=document.createElement('div');wrap.className='canvaswrap';var disp=document.createElement('canvas');disp.width=base.width;disp.height=base.height;disp.getContext('2d').drawImage(base,0,0);wrap.appendChild(disp);var textLayer=document.createElement('div');textLayer.className='textlayer';var textInner=document.createElement('div');textInner.className='textinner';textLayer.appendChild(textInner);wrap.appendChild(textLayer);var layer=document.createElement('div');layer.className='layer';var marquee=document.createElement('div');marquee.className='marquee';layer.appendChild(marquee);wrap.appendChild(layer);holder.appendChild(wrap);pagesEl.appendChild(holder);var p={base:base,redactedBase:null,unlockedBase:null,disp:disp,wrap:wrap,layer:layer,textLayer:textLayer,textInner:textInner,rects:[],wPt:wPt,hPt:hPt,textItems:textItems||[],intrinsicW:intrinsicW||base.width,intrinsicH:intrinsicH||base.height};pages.push(p);buildTextLayer(p);buildSearchIndex(p);wireDrawing(p,marquee);wireTextSelect(p);watchPageWidth(p);}
 function redraw(p,canvas){p.disp.width=canvas.width;p.disp.height=canvas.height;p.disp.getContext('2d').drawImage(canvas,0,0);}
 /* The invisible text has to sit exactly over the drawn glyphs, or selecting
    picks up the wrong words. A run set in the fallback font is not the width the
@@ -89,151 +89,198 @@ function wireDrawing(page,marquee){var drawing=false,sx=0,sy=0,wrap=page.wrap;fu
 /* ============================================================
    Selecting text to redact.
 
-   Nothing is boxed until you say so. Committing on pointerup — which is what
-   this did — fires the instant a long press lands on a phone, so the word is
-   already black before the handles appear and a touch selection can never be
-   widened. On a desktop the same handler turns a stray click into a box. So
-   the selection stays put, a button appears beside it, and you can see exactly
-   what is about to be covered before it is.
+   The browser's own selection is no use over a PDF. The text sits in
+   absolutely positioned runs whose DOM order is the order the PDF happens to
+   draw them in, not the order they appear on the page, so the moment the
+   pointer leaves a line the browser extends the selection through DOM order
+   and swallows half the document. Nudging the mouse a few pixels above a line
+   should not do that.
+
+   So selection here is geometric and knows nothing about the DOM. Words are
+   measured once, grouped into lines, and a drag picks the run of words between
+   where it started and where it is now. Staying on one line can only ever
+   select on that line; other lines are reached by actually being over them.
    ============================================================ */
-var pendingBoxes=null,selBtn=null,selTimer=null;
 
-function ensureSelBtn(){
-  if(selBtn)return selBtn;
-  selBtn=document.createElement('button');
-  selBtn.type='button';
-  selBtn.id='selBtn';
-  selBtn.className='selbtn';
-  selBtn.textContent='Black out';
-  selBtn.hidden=true;
-  // taking focus would collapse the selection; the boxes are already computed
-  selBtn.addEventListener('pointerdown',function(e){e.preventDefault();});
-  selBtn.addEventListener('click',function(e){e.preventDefault();commitSelection();});
-  document.body.appendChild(selBtn);
-  return selBtn;
-}
+/* Words, measured once per page and cached, in fractions of the page so they
+   survive any later rescaling. */
+function wordIndex(p){
+  if(p.words)return p.words;
+  if(!p.textInner||!p.wrap.clientWidth)return null;
+  fitTextRuns(p);
+  var canvas=p.disp.getBoundingClientRect();
+  if(!canvas.width||!canvas.height)return null;
 
-function hideSelBtn(){
-  pendingBoxes=null;
-  if(selBtn)selBtn.hidden=true;
-}
-
-function clearTextSelection(){
-  var s=window.getSelection();
-  if(s&&s.rangeCount)s.removeAllRanges();
-  hideSelBtn();
-}
-
-function pageForRect(cr){
-  var cx=cr.left+cr.width/2,cy=cr.top+cr.height/2;
-  for(var i=0;i<pages.length;i++){
-    var b=pages[i].wrap.getBoundingClientRect();
-    if(cx>=b.left&&cx<=b.right&&cy>=b.top&&cy<=b.bottom)return pages[i];
-  }
-  return null;
-}
-
-/* One bar per line rather than one per text run, so a sentence split across
-   several runs does not become a row of touching boxes. */
-function mergeLines(list){
-  list.sort(function(a,b){return a.t-b.t||a.l-b.l;});
-  var out=[];
-  list.forEach(function(r){
-    for(var i=0;i<out.length;i++){
-      var o=out[i];
-      var overlap=Math.min(o.b,r.b)-Math.max(o.t,r.t);
-      var sameLine=overlap>.55*Math.min(o.b-o.t,r.b-r.t);
-      var touching=r.l<=o.r+4&&o.l<=r.r+4;
-      if(sameLine&&touching){
-        o.l=Math.min(o.l,r.l);o.t=Math.min(o.t,r.t);
-        o.r=Math.max(o.r,r.r);o.b=Math.max(o.b,r.b);
-        return;
-      }
+  var words=[];
+  [].forEach.call(p.textInner.childNodes,function(span){
+    var node=span.firstChild;
+    if(!node||!node.nodeValue)return;
+    var re=/\S+/g,m;
+    while((m=re.exec(node.nodeValue))){
+      var rg=document.createRange();
+      rg.setStart(node,m.index);
+      rg.setEnd(node,m.index+m[0].length);
+      var r=rg.getBoundingClientRect();
+      if(r.width<=0||r.height<=0)continue;
+      words.push({
+        x1:(r.left-canvas.left)/canvas.width,
+        x2:(r.right-canvas.left)/canvas.width,
+        y1:(r.top-canvas.top)/canvas.height,
+        y2:(r.bottom-canvas.top)/canvas.height
+      });
     }
-    out.push({l:r.l,t:r.t,r:r.r,b:r.b});
+  });
+  if(!words.length){p.words={lines:[],all:[]};return p.words;}
+
+  // group into lines by vertical overlap, then read each line left to right
+  words.sort(function(a,b){return (a.y1+a.y2)/2-(b.y1+b.y2)/2;});
+  var lines=[],cur=null;
+  words.forEach(function(w){
+    var mid=(w.y1+w.y2)/2;
+    if(cur&&mid<cur.y2-(cur.y2-cur.y1)*.35){cur.words.push(w);cur.y1=Math.min(cur.y1,w.y1);cur.y2=Math.max(cur.y2,w.y2);}
+    else{cur={y1:w.y1,y2:w.y2,words:[w]};lines.push(cur);}
+  });
+  var all=[];
+  lines.forEach(function(line,li){
+    line.words.sort(function(a,b){return a.x1-b.x1;});
+    line.index=li;
+    line.words.forEach(function(w){w.line=li;w.i=all.length;all.push(w);});
+  });
+  p.words={lines:lines,all:all};
+  return p.words;
+}
+
+/* Which word is under a point — or, if none is, the nearest one on the line
+   the point is closest to. Falling into the gap between two lines picks a
+   neighbour rather than doing something dramatic. */
+function wordNear(idx,x,y){
+  if(!idx||!idx.lines.length)return null;
+  var line=null,best=Infinity;
+  idx.lines.forEach(function(l){
+    var d=y<l.y1?l.y1-y:(y>l.y2?y-l.y2:0);
+    if(d<best){best=d;line=l;}
+  });
+  if(!line)return null;
+  var pick=null,pd=Infinity;
+  line.words.forEach(function(w){
+    var d=x<w.x1?w.x1-x:(x>w.x2?x-w.x2:0);
+    if(d<pd){pd=d;pick=w;}
+  });
+  return pick;
+}
+
+/* One merged bar per line for everything between two words. */
+function spanBoxes(idx,a,b){
+  if(!a||!b)return[];
+  var lo=Math.min(a.i,b.i),hi=Math.max(a.i,b.i),byLine={};
+  for(var i=lo;i<=hi;i++){
+    var w=idx.all[i],g=byLine[w.line];
+    if(!g)byLine[w.line]=g={x1:w.x1,x2:w.x2,y1:w.y1,y2:w.y2};
+    else{g.x1=Math.min(g.x1,w.x1);g.x2=Math.max(g.x2,w.x2);g.y1=Math.min(g.y1,w.y1);g.y2=Math.max(g.y2,w.y2);}
+  }
+  var out=[];
+  Object.keys(byLine).forEach(function(k){
+    var g=byLine[k],padX=.002,padTop=(g.y2-g.y1)*.12,drop=(g.y2-g.y1)*DESCENDER;
+    var x=Math.max(0,g.x1-padX),y=Math.max(0,g.y1-padTop);
+    out.push({x:x,y:y,
+      w:Math.min(1-x,g.x2+padX-x),
+      h:Math.min(1-y,g.y2+drop-y)});
   });
   return out;
 }
 
-/* Selection -> boxes, in page coordinates. Every page the selection crosses is
-   included; the old per-page handler only ever boxed the page the pointer
-   happened to be released over. */
-function readSelection(){
-  var sel=window.getSelection();
-  if(!sel||!sel.rangeCount||sel.isCollapsed)return null;
-  var buckets=[];
-  for(var i=0;i<sel.rangeCount;i++){
-    var rects=sel.getRangeAt(i).getClientRects();
-    for(var j=0;j<rects.length;j++){
-      var cr=rects[j];
-      if(cr.width<=1||cr.height<=1)continue;
-      var page=pageForRect(cr);
-      if(!page)continue;                       // selection outside the pages
-      var bucket=null;
-      for(var k=0;k<buckets.length;k++)if(buckets[k].page===page)bucket=buckets[k];
-      if(!bucket){bucket={page:page,rects:[]};buckets.push(bucket);}
-      bucket.rects.push({l:cr.left,t:cr.top,r:cr.right,b:cr.bottom});
-    }
-  }
-  var out=[];
-  buckets.forEach(function(bucket){
-    var b=bucket.page.wrap.getBoundingClientRect();
-    if(!b.width||!b.height)return;
-    mergeLines(bucket.rects).forEach(function(m){
-      var pad=2,drop=Math.max(pad,(m.b-m.t)*DESCENDER);
-      var x1=Math.max(b.left,m.l-pad),y1=Math.max(b.top,m.t-pad);
-      var x2=Math.min(b.right,m.r+pad),y2=Math.min(b.bottom,m.b+drop);
-      if(x2-x1<=0||y2-y1<=0)return;
-      out.push({page:bucket.page,x:(x1-b.left)/b.width,y:(y1-b.top)/b.height,
-                w:(x2-x1)/b.width,h:(y2-y1)/b.height,
-                cx:(x1+x2)/2,bottom:y2});
-    });
+function clearHighlight(page){
+  if(!page||!page.hl)return;
+  page.hl.forEach(function(el){el.remove();});
+  page.hl=null;
+}
+
+function drawHighlight(page,boxes){
+  clearHighlight(page);
+  page.hl=boxes.map(function(b){
+    var el=document.createElement('div');
+    el.className='selhl';
+    el.style.left=b.x*100+'%';el.style.top=b.y*100+'%';
+    el.style.width=b.w*100+'%';el.style.height=b.h*100+'%';
+    page.layer.appendChild(el);
+    return el;
   });
-  return out.length?out:null;
 }
 
-function placeSelBtn(boxes){
-  var btn=ensureSelBtn();
-  btn.hidden=false;
-  var last=boxes[boxes.length-1];
-  var w=btn.offsetWidth||110,h=btn.offsetHeight||34;
-  var left=Math.min(Math.max(8,last.cx-w/2),window.innerWidth-w-8);
-  var top=last.bottom+10;
-  if(top+h>window.innerHeight-8)top=Math.max(8,last.bottom-h-10);
-  btn.style.left=Math.round(left)+'px';
-  btn.style.top=Math.round(top)+'px';
+function wireTextSelect(page){
+  var wrap=page.wrap,idx=null,anchor=null,head=null,dragging=false,moved=false,startX=0,startY=0;
+
+  function at(e){
+    var b=page.disp.getBoundingClientRect();
+    return{x:(e.clientX-b.left)/b.width,y:(e.clientY-b.top)/b.height};
+  }
+  function paint(){
+    if(!anchor||!head)return;
+    drawHighlight(page,spanBoxes(idx,anchor,head));
+  }
+
+  wrap.addEventListener('pointerdown',function(e){
+    if(mode!=='text'||e.button)return;
+    idx=wordIndex(page);
+    if(!idx||!idx.all.length)return;
+    var p=at(e);
+    anchor=wordNear(idx,p.x,p.y);
+    head=anchor;
+    if(!anchor)return;
+    dragging=true;moved=false;startX=e.clientX;startY=e.clientY;
+    try{wrap.setPointerCapture(e.pointerId);}catch(err){}
+    e.preventDefault();
+    paint();
+  });
+
+  wrap.addEventListener('pointermove',function(e){
+    if(!dragging)return;
+    if(!moved&&Math.abs(e.clientX-startX)<3&&Math.abs(e.clientY-startY)<3)return;
+    moved=true;
+    var p=at(e);
+    var w=wordNear(idx,p.x,p.y);
+    if(w){head=w;paint();}
+  });
+
+  function finish(e){
+    if(!dragging)return;
+    dragging=false;
+    try{wrap.releasePointerCapture(e.pointerId);}catch(err){}
+    var boxes=(anchor&&head)?spanBoxes(idx,anchor,head):[];
+    clearHighlight(page);
+    anchor=head=null;
+    if(!boxes.length)return;
+    if(!moved)return;   // a click is not a selection; double-click takes the word
+    snapshot();
+    boxes.forEach(function(b){makeBox(page,b.x,b.y,b.w,b.h);});
+    say('Blacked out '+boxes.length+' line'+(boxes.length===1?'':'s')+'. Undo if that caught too much.');
+  }
+  wrap.addEventListener('pointerup',finish);
+  wrap.addEventListener('pointercancel',function(e){
+    dragging=false;clearHighlight(page);anchor=head=null;
+    try{wrap.releasePointerCapture(e.pointerId);}catch(err){}
+  });
+
+  // a double click takes the word under the pointer
+  wrap.addEventListener('dblclick',function(e){
+    if(mode!=='text')return;
+    idx=wordIndex(page);
+    if(!idx||!idx.all.length)return;
+    var p=at(e),w=wordNear(idx,p.x,p.y);
+    if(!w)return;
+    var boxes=spanBoxes(idx,w,w);
+    if(!boxes.length)return;
+    snapshot();
+    boxes.forEach(function(b){makeBox(page,b.x,b.y,b.w,b.h);});
+    say('Blacked out one word. Undo if that caught too much.');
+  });
 }
 
-function refreshSelection(){
-  if(mode!=='text'){hideSelBtn();return;}
-  var boxes=readSelection();
-  if(!boxes){hideSelBtn();return;}
-  pendingBoxes=boxes;
-  placeSelBtn(boxes);
+function clearTextSelection(){
+  pages.forEach(clearHighlight);
+  var s=window.getSelection();
+  if(s&&s.rangeCount)s.removeAllRanges();
 }
-
-function commitSelection(){
-  if(!pendingBoxes||!pendingBoxes.length)return;
-  var boxes=pendingBoxes;
-  snapshot();
-  boxes.forEach(function(b){makeBox(b.page,b.x,b.y,b.w,b.h);});
-  clearTextSelection();
-  say('Blacked out '+boxes.length+' line'+(boxes.length===1?'':'s')+'. Undo if that caught too much.');
-}
-
-document.addEventListener('selectionchange',function(){
-  clearTimeout(selTimer);
-  // wait for the gesture to settle: on a phone the selection keeps changing
-  // while the handles are being dragged
-  selTimer=setTimeout(refreshSelection,120);
-});
-window.addEventListener('scroll',function(){if(pendingBoxes)refreshSelection();},true);
-window.addEventListener('resize',function(){if(pendingBoxes)refreshSelection();});
-document.addEventListener('keydown',function(e){
-  if(mode!=='text'||!pendingBoxes)return;
-  if(e.key==='Enter'){e.preventDefault();commitSelection();}
-  else if(e.key==='Escape'){e.preventDefault();clearTextSelection();}
-});
 
 function wireBox(r,del,grip){var dragging=false,resizing=false,moved=false,startX=0,startY=0,origin=null;function scale(){var b=r.page.wrap.getBoundingClientRect();return{w:b.width,h:b.height};}del.onpointerdown=function(e){e.stopPropagation();};del.onclick=function(e){e.stopPropagation();snapshot();removeBox(r);};grip.addEventListener('pointerdown',function(e){if(mode!=='move')return;e.stopPropagation();e.preventDefault();grip.setPointerCapture(e.pointerId);select(r);resizing=true;moved=false;startX=e.clientX;startY=e.clientY;origin={w:r.w,h:r.h};});grip.addEventListener('pointermove',function(e){if(!resizing)return;if(!moved){snapshot();moved=true;}var s=scale();r.w=Math.max(.005,Math.min(origin.w+(e.clientX-startX)/s.w,1-r.x));r.h=Math.max(.005,Math.min(origin.h+(e.clientY-startY)/s.h,1-r.y));place(r);});grip.onpointerup=grip.onpointercancel=function(){resizing=false;};r.el.addEventListener('pointerdown',function(e){if(mode!=='move')return;e.preventDefault();r.el.setPointerCapture(e.pointerId);select(r);dragging=true;moved=false;startX=e.clientX;startY=e.clientY;origin={x:r.x,y:r.y};});r.el.addEventListener('pointermove',function(e){if(!dragging)return;var dx=e.clientX-startX,dy=e.clientY-startY;if(!moved){if(Math.abs(dx)<3&&Math.abs(dy)<3)return;snapshot();moved=true;}var s=scale();r.x=Math.max(0,Math.min(origin.x+dx/s.w,1-r.w));r.y=Math.max(0,Math.min(origin.y+dy/s.h,1-r.h));place(r);});r.el.onpointerup=r.el.onpointercancel=function(){dragging=false;};}
 function boxesForMatch(page,start,end){var its=page.searchRanges.filter(function(r){return r.end>start&&r.start<end;}).map(function(r){return r.item;});if(!its.length)return[];var groups=[];its.forEach(function(it){var cy=it.y+it.h/2,g=groups.length?groups[groups.length-1]:null;if(!g||Math.abs(cy-g.cy)>Math.max(it.h,g.h)*.7){g={x1:it.x,y1:it.y,x2:it.x+it.w,y2:it.y+it.h,cy:cy,h:it.h};groups.push(g);}else{g.x1=Math.min(g.x1,it.x);g.y1=Math.min(g.y1,it.y);g.x2=Math.max(g.x2,it.x+it.w);g.y2=Math.max(g.y2,it.y+it.h);g.cy=(g.y1+g.y2)/2;g.h=g.y2-g.y1;}});return groups.map(function(g){var padX=Math.max(3,g.h*.1),padTop=Math.max(2,g.h*.08),padBot=Math.max(3,g.h*DESCENDER),x1=Math.max(0,g.x1-padX),y1=Math.max(0,g.y1-padTop),x2=Math.min(page.intrinsicW,g.x2+padX),y2=Math.min(page.intrinsicH,g.y2+padBot);return{x:x1/page.intrinsicW,y:y1/page.intrinsicH,w:(x2-x1)/page.intrinsicW,h:(y2-y1)/page.intrinsicH};});}
