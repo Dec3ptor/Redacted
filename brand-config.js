@@ -9,7 +9,5 @@ window.BLACKOUT_CONFIG = Object.assign({
   siteUrl: 'https://dec3ptor.github.io/Redacted/',
   // Page that reverses a reversible file. Relative to siteUrl.
   unlockPath: 'unlock.html',
-  // Shown under the mark. Falls back to siteUrl without the scheme.
-  website: '',
   watermarkEnabled: true
 }, window.BLACKOUT_CONFIG || {});

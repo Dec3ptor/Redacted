@@ -60,10 +60,15 @@ the save is abandoned if any is found — the check reads the file, not the
 reference, because following the reference is what produced the false pass.
 
 ## Visible mark
-A reversible file is marked as one — a `REVERSIBLE` chip and the unlock address
-sit under the wordmark, and the mark carries a link annotation to the unlock
-page. A permanent file shows the wordmark and the site address, linking to the
-app.
+A reversible file is marked as one — a `REVERSIBLE` chip sits under the
+wordmark, and the mark carries a link annotation to the unlock page. A permanent
+file shows the wordmark alone, linking to the app. The address is deliberately
+not drawn: the whole mark is the click target, so printing the URL would only
+add clutter to someone else's document.
+
+A PNG cannot carry a link, so a reversible image shows the chip but offers no
+route back to the unlock page from the file itself. Whoever holds the key has to
+know where to go.
 
 Because the two variants say different things, making a file permanent has to
 remove the old mark rather than cover it. In a PDF the mark is drawn into a

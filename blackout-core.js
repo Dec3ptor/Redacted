@@ -1,6 +1,6 @@
 (function(){
 'use strict';
-var CFG=window.BLACKOUT_CONFIG||{productName:'Blackout',website:'',watermarkEnabled:true};
+var CFG=window.BLACKOUT_CONFIG||{productName:'Blackout',watermarkEnabled:true};
 var te=new TextEncoder(),td=new TextDecoder();
 function join(){var a=[].slice.call(arguments),n=a.reduce(function(s,x){return s+x.length;},0),o=new Uint8Array(n),p=0;a.forEach(function(x){o.set(x,p);p+=x.length;});return o;}
 function u32(n){var a=new Uint8Array(4);new DataView(a.buffer).setUint32(0,n);return a;}
@@ -51,10 +51,6 @@ async function stripPdfRecovery(pdfBytes){var P=window.PDFLib;if(!P)throw new Er
   await applyPdfWatermark(doc,false);   // removes the reversible mark, stamps the permanent one
   return new Uint8Array(await doc.save({useObjectStreams:true,addDefaultPage:false,updateFieldAppearances:false}));}
 
-/* A file that was reversible carries a mark linking to the unlock page. Once
-   the recovery is gone that link is wrong, so repoint it at the app. Only the
-   annotation changes — the drawn mark is identical in both modes, so no page
-   content is touched. */
 /* The honest check after stripping: the envelope magic must not appear
    anywhere in the file. Following the catalog reference is not enough — an
    orphaned stream is still readable by anything that parses objects directly. */
@@ -91,12 +87,12 @@ function brandTarget(reversible){
   var b=siteBase();if(!b)return'';
   return reversible?b+(CFG.unlockPath||'unlock.html')+'?from=mark':b;
 }
-function prettyUrl(u){return String(u||'').replace(/^https?:\/\//,'').replace(/\?.*$/,'').replace(/\/$/,'');}
+/* The address is deliberately not drawn. The whole mark is the click target,
+   so printing the URL only adds clutter to someone else's document. */
 function brandLines(reversible){
   return{
     top:'Redacted with '+(CFG.productName||'Blackout'),
     chip:reversible?'REVERSIBLE':'',
-    bottom:CFG.website||prettyUrl(brandTarget(reversible)||siteBase()),
     url:brandTarget(reversible)
   };
 }
@@ -109,20 +105,18 @@ function trackedWidth(font,text,size){
 function markLayout(size,bold,regular,reversible){
   var lines=brandLines(reversible);
   var s=Math.max(.7,Math.min(1.15,Math.min(size.width,size.height)/612));
-  var f1=8*s,f2=5.4*s,f3=6.2*s;
-  var pad=6*s,barW=15*s,barH=3.2*s,gap=5*s,lineGap=5.5*s;
-  var chipPadX=3.4*s,chipPadY=2.2*s;
-  var chipTextW=lines.chip?trackedWidth(bold,lines.chip,f2):0;
-  var chipW=lines.chip?chipTextW+chipPadX*2:0;
+  var f1=8*s,f2=5.2*s;
+  var pad=3.6*s,barW=15*s,barH=3.2*s,gap=4.5*s,lineGap=3.4*s;
+  var chipPadX=2.8*s,chipPadY=1.7*s;
+  var chipW=lines.chip?trackedWidth(bold,lines.chip,f2)+chipPadX*2:0;
   var chipH=lines.chip?f2*CAP+chipPadY*2:0;
-  var urlW=lines.bottom?regular.widthOfTextAtSize(lines.bottom,f3):0;
-  var row1W=barW+gap+bold.widthOfTextAtSize(lines.top,f1);
-  var row2W=(lines.chip?chipW+gap:0)+urlW;
-  var rowH=Math.max(chipH,f3*CAP);
-  var boxW=Math.max(row1W,row2W)+pad*2;
-  var boxH=pad*2+f1*CAP+lineGap+rowH;
-  return{lines:lines,s:s,f1:f1,f2:f2,f3:f3,pad:pad,barW:barW,barH:barH,gap:gap,
-    chipW:chipW,chipH:chipH,chipPadX:chipPadX,rowH:rowH,
+  // the chip sits under the wordmark, so the type forms one column with the
+  // bar hanging to its left
+  var textW=Math.max(bold.widthOfTextAtSize(lines.top,f1),chipW);
+  var boxW=pad*2+barW+gap+textW;
+  var boxH=pad*2+f1*CAP+(lines.chip?lineGap+chipH:0);
+  return{lines:lines,s:s,f1:f1,f2:f2,pad:pad,barW:barW,barH:barH,gap:gap,lineGap:lineGap,
+    chipW:chipW,chipH:chipH,chipPadX:chipPadX,
     boxW:boxW,boxH:boxH,x:size.width-boxW-8*s,y:8*s};
 }
 
@@ -141,18 +135,12 @@ function markOperators(L,fBold,fReg){
   o.push('0 0 0 rg '+n(x+L.pad)+' '+n(barY)+' '+n(L.barW)+' '+n(L.barH)+' re f');
   o.push('BT /'+fBold+' '+n(L.f1)+' Tf 1 0 0 1 '+n(x+L.pad+L.barW+L.gap)+' '+n(base1)+' Tm '+pdfStr(L.lines.top)+' Tj ET');
 
-  // row 2 — the reversible chip, then the address
-  var rowY=y+L.pad,cx=x+L.pad;
+  // row 2 — the reversible chip, aligned under the wordmark
   if(L.lines.chip){
-    var chipY=rowY+(L.rowH-L.chipH)/2;
+    var cx=x+L.pad+L.barW+L.gap,chipY=y+L.pad;
     o.push('0 0 0 RG '+n(.6*L.s)+' w '+n(cx)+' '+n(chipY)+' '+n(L.chipW)+' '+n(L.chipH)+' re S');
     var ctBase=chipY+(L.chipH-L.f2*CAP)/2;
     o.push('BT /'+fBold+' '+n(L.f2)+' Tf '+n(TRACK*L.f2)+' Tc 1 0 0 1 '+n(cx+L.chipPadX)+' '+n(ctBase)+' Tm '+pdfStr(L.lines.chip)+' Tj 0 Tc ET');
-    cx+=L.chipW+L.gap;
-  }
-  if(L.lines.bottom){
-    var uBase=rowY+(L.rowH-L.f3*CAP)/2;
-    o.push('.35 .35 .35 rg BT /'+fReg+' '+n(L.f3)+' Tf 1 0 0 1 '+n(cx)+' '+n(uBase)+' Tm '+pdfStr(L.lines.bottom)+' Tj ET');
   }
   o.push('Q');
   return o.join('\n');
@@ -230,26 +218,24 @@ function linkRegion(doc,page,x,y,w,h,url){
 function canvasLayout(ctx,w,h,reversible){
   var lines=brandLines(reversible);
   var s=Math.max(.75,Math.min(2.4,Math.min(w,h)/760));
-  var f1=Math.round(15*s),f2=Math.round(10*s),f3=Math.round(11.5*s);
-  var pad=Math.round(11*s),barW=Math.round(27*s),barH=Math.max(3,Math.round(6*s));
-  var gap=Math.round(9*s),lineGap=Math.round(9*s);
-  var chipPadX=Math.round(6*s),chipPadY=Math.round(4*s);
+  var f1=Math.round(15*s),f2=Math.round(9.5*s);
+  var pad=Math.round(7*s),barW=Math.round(27*s),barH=Math.max(3,Math.round(6*s));
+  var gap=Math.round(8*s),lineGap=Math.round(6*s);
+  var chipPadX=Math.round(5*s),chipPadY=Math.round(3*s);
   var B='700 '+f1+'px Arial, Helvetica, sans-serif';
   var C='700 '+f2+'px Arial, Helvetica, sans-serif';
-  var U='400 '+f3+'px Arial, Helvetica, sans-serif';
   var track=TRACK*f2;
   ctx.save();ctx.textBaseline='alphabetic';
   ctx.font=B; var topW=ctx.measureText(lines.top).width;
   ctx.font=C; var chipTextW=lines.chip?ctx.measureText(lines.chip).width+track*Math.max(0,lines.chip.length-1):0;
-  ctx.font=U; var urlW=lines.bottom?ctx.measureText(lines.bottom).width:0;
   ctx.restore();
   var chipW=lines.chip?Math.round(chipTextW+chipPadX*2):0;
   var chipH=lines.chip?Math.round(f2*CAP+chipPadY*2):0;
-  var rowH=Math.max(chipH,Math.round(f3*CAP));
-  var boxW=Math.ceil(Math.max(barW+gap+topW,(lines.chip?chipW+gap:0)+urlW)+pad*2);
-  var boxH=Math.ceil(pad*2+f1*CAP+lineGap+rowH);
-  return{lines:lines,s:s,f1:f1,f2:f2,f3:f3,pad:pad,barW:barW,barH:barH,gap:gap,lineGap:lineGap,
-    chipW:chipW,chipH:chipH,chipPadX:chipPadX,chipPadY:chipPadY,rowH:rowH,track:track,B:B,C:C,U:U,
+  var textW=Math.max(topW,chipW);
+  var boxW=Math.ceil(pad*2+barW+gap+textW);
+  var boxH=Math.ceil(pad*2+f1*CAP+(lines.chip?lineGap+chipH:0));
+  return{lines:lines,s:s,f1:f1,f2:f2,pad:pad,barW:barW,barH:barH,gap:gap,lineGap:lineGap,
+    chipW:chipW,chipH:chipH,chipPadX:chipPadX,chipPadY:chipPadY,track:track,B:B,C:C,
     boxW:boxW,boxH:boxH,x:w-boxW-Math.round(10*s),y:h-boxH-Math.round(10*s)};
 }
 
@@ -267,23 +253,17 @@ function applyCanvasWatermark(canvas,reversible){
   ctx.fillRect(L.x+L.pad,Math.round(base1-L.f1*CAP/2-L.barH/2),L.barW,L.barH);
   ctx.font=L.B;ctx.fillText(L.lines.top,L.x+L.pad+L.barW+L.gap,base1);
 
-  // row 2 — chip then address
-  var rowTop=L.y+L.pad+L.f1*CAP+L.lineGap,cx=L.x+L.pad;
+  // row 2 — the reversible chip, aligned under the wordmark
   if(L.lines.chip){
-    var chipY=rowTop+(L.rowH-L.chipH)/2;
+    var cx=L.x+L.pad+L.barW+L.gap,chipY=Math.round(L.y+L.pad+L.f1*CAP+L.lineGap);
     ctx.strokeStyle='#000';ctx.lineWidth=Math.max(1,Math.round(1.1*L.s));
-    ctx.strokeRect(cx+.5,Math.round(chipY)+.5,L.chipW,L.chipH);
+    ctx.strokeRect(cx+.5,chipY+.5,L.chipW,L.chipH);
     ctx.font=L.C;ctx.fillStyle='#000';
     var tx=cx+L.chipPadX,tb=chipY+(L.chipH+L.f2*CAP)/2;
     for(var i=0;i<L.lines.chip.length;i++){
       ctx.fillText(L.lines.chip[i],tx,tb);
       tx+=ctx.measureText(L.lines.chip[i]).width+L.track;
     }
-    cx+=L.chipW+L.gap;
-  }
-  if(L.lines.bottom){
-    ctx.font=L.U;ctx.fillStyle='#595959';
-    ctx.fillText(L.lines.bottom,cx,rowTop+(L.rowH+L.f3*CAP)/2);
   }
   ctx.restore();
   return canvas;
@@ -303,7 +283,13 @@ function restampCanvasWatermark(canvas){
   var w=Math.max(was.x+was.boxW,now.x+now.boxW)-x;
   var h=Math.max(was.y+was.boxH,now.y+now.boxH)-y;
   ctx.save();ctx.fillStyle='#fff';ctx.fillRect(x,y,w,h);ctx.restore();
-  return applyCanvasWatermark(canvas,false);
+  /* The cleared band is as tall as the reversible mark it replaced, so centre
+     the shorter permanent mark in it rather than leaving the slack above. */
+  ctx.save();
+  ctx.translate(0,-Math.round((was.boxH-now.boxH)/2));
+  applyCanvasWatermark(canvas,false);
+  ctx.restore();
+  return canvas;
 }
 
 /* Remove the recovery chunk and restamp, so a permanent image never carries a
