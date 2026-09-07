@@ -66,8 +66,9 @@ function flatten(page){var c=document.createElement('canvas');c.width=page.base.
    put the session back exactly as it was. The recovery key is deliberately not
    kept — storing it beside the encrypted payload would defeat the encryption. */
 var pendingRestore=null;
+function slotsOK(){return !!(window.BlackoutCore&&BlackoutCore.slots);}
 async function keepSession(){
-  if(!sourceFile)return;
+  if(!sourceFile||!slotsOK())return;   // an older core would write it over the handoff
   try{await BlackoutCore.putHandoff({file:sourceFile,name:sourceFile.name,mode:selectedOutput(),
     rects:pages.map(function(p){return p.rects.map(function(r){return{x:r.x,y:r.y,w:r.w,h:r.h};});}),
     savedAt:Date.now()},'session');}
@@ -102,8 +103,8 @@ $('resumeBtn').onclick=async function(){var s=null;try{s=await BlackoutCore.getH
 $('discardBtn').onclick=async function(){$('resumebar').hidden=true;await dropSession();say('Unfinished edit discarded.');};
 (async function(){
   var wantsResume=new URLSearchParams(location.search).get('resume')==='1',s=null;
-  try{s=await BlackoutCore.getHandoff('session');}catch(e){}
-  if(!s||!s.file){if(wantsResume)say('That unfinished edit is no longer available. Open the file again to start over.');return;}
+  try{if(slotsOK())s=await BlackoutCore.getHandoff('session');}catch(e){}
+  if(!s||!s.file){if(wantsResume)say(slotsOK()?'That unfinished edit is no longer available. Open the file again to start over.':'This page is running a cached older copy of one of its scripts, so the edit could not be restored. Reload with Ctrl+Shift+R (Cmd+Shift+R on a Mac) and redact the file again.');return;}
   if(wantsResume){window.history.replaceState(null,'','index.html');restoreSession(s);return;}
   $('resumeText').textContent='Unfinished edit of \u201C'+(s.name||'a file')+'\u201D.';
   $('resumebar').hidden=false;
